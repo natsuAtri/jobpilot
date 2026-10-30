@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}双 agent 工作中 · {{ job.title }}{% endblock %}
+{% block content %}
+
+<div class="editor-head">
+  <div>
+    <h1 class="page-title">双 agent 正在改写简历</h1>
+    <div class="muted small">{{ job.title }} · 起草 agent 改写 → 评审 agent 对账 → 三守恒校验</div>
+  </div>
+</div>
+
+<section class="card" style="background:transparent;border:none;padding:0">
+  <div id="gen-progress" class="trace-shell theme-paper">
+    <div class="gen-status">
+      <div class="spinner"></div>
+      <span id="gen-status-text">正在启动…</span>
+    </div>
+    <ol class="trace" id="trace"></ol>
+  </div>
+
+  <div id="gen-done" style="display:none">
+    <a class="btn" id="gen-result-link" href="#">查看终审结果</a>
+    <a class="btn btn-ghost btn-sm" href="/jobs/{{ job.id }}">回岗位</a>
+  </div>
+</section>
+
+<script>
+  const runId = {{ run_id | tojson }};
+  const resumeId = {{ resume_id | tojson }};
+  const jobId = {{ job.id }};
+  const STAGE_LABEL = {
+    facts: '抽取事实', draft: '起草 agent', critique: '评审 agent',
+    revise: '修订', guard: '三守恒校验', finish: '完成',
+  };
+  const traceEl = document.getElementById('trace');
+
+  function esc(t) {
+    return (t || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function detailHtml(step) {
+    if (!step.detail || !step.detail.length) return '';
+    if (step.stage === 'draft') {
+      return '<ul class="trace-detail">' + step.detail.map(d =>
+        `<li><s>${esc(d.original)}</s> → <b>${esc(d.rewritten)}</b>` +
+        (d.blocked ? ' <span class="tag tag-bad">拦</span>' : '') + '</li>').join('') + '</ul>';
+    }
+    if (step.stage === 'facts') {
+      return '<ul class="trace-detail">' + step.detail.map(d => `<li>${esc(d)}</li>`).join('') + '</ul>';
+    }
+    if (step.stage === 'critique') {
+      return '<ul class="trace-detail">' + step.detail.map(d =>
+        `<li><b>${esc(d.verdict || '')}</b> ${esc(d.reason || '')} ${d.suggestion ? '· ' + esc(d.suggestion) : ''}</li>`).join('') + '</ul>';
+    }
+    if (step.stage === 'guard') {
+      return '<ul class="trace-detail">' + step.detail.map(d =>
+        `<li>${esc(d.text)} <span class="tag tag-bad">${esc(d.reason)}</span></li>`).join('') + '</ul>';
+    }
+    return '';
+  }
+
+  function render(state) {
+    traceEl.innerHTML = state.steps.map(s => `
+      <li class="trace-step stage-${esc(s.stage)}">
+        <span class="trace-at">${esc(s.at)}</span>
+        <div class="trace-body">
+          <div class="trace-msg"><span class="trace-stage">${esc(STAGE_LABEL[s.stage] || s.stage)}</span> ${esc(s.message)}</div>
+          ${detailHtml(s)}
+        </div>
+      </li>`).join('');
+
+    if (state.status === 'done') {
+      document.getElementById('gen-progress').style.display = 'none';
+      const done = document.getElementById('gen-done');
+      done.style.display = 'block';
+      document.getElementById('gen-status-text').textContent = '完成';
+      const link = document.getElementById('gen-result-link');
+      link.href = `/jobs/${jobId}/generate?resume_id=${resumeId}`;
+      return true;
+    }
+    if (state.status === 'error') {
+      document.getElementById('gen-status-text').textContent = '出错：' + (state.error || '未知错误');
+      document.querySelector('.gen-status .spinner')?.remove();
+      return true;
+    }
+    return false;
+  }
+
+  async function poll() {
+    const resp = await fetch(`/jobs/${jobId}/generate/status/${runId}`);
+    const state = await resp.json();
+    const finished = render(state);
+    if (!finished) setTimeout(poll, 1200);
+  }
+  poll();
+</script>
+
+{% endblock %}

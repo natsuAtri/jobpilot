@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}解析复核 · {{ resume.title }}{% endblock %}
+{% block content %}
+
+<div class="editor-head">
+  <div>
+    <h1 class="page-title">解析复核</h1>
+    <div class="muted small">{{ resume.title }} · 解析只是草稿，下面是 Agent 的疑问，逐条说清楚，或直接补充简历里没有的内容。</div>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-sm" href="/resumes/{{ resume.id }}">去编辑</a>
+    <a class="btn btn-ghost btn-sm" href="/chat">去 Agent</a>
+    <a class="btn btn-ghost btn-sm" href="/resumes">返回列表</a>
+  </div>
+</div>
+
+{% if msg %}<div class="banner banner-ok">{{ msg }}　<a href="/chat">去 Agent →</a></div>{% endif %}
+
+{% if not has_model %}
+<div class="banner banner-bad">
+  还没有配置模型，下面的对话无法理解你的回答。在项目根目录的 <code>.env</code> 里填
+  <code>RA_LLM_BASE_URL</code> / <code>RA_LLM_API_KEY</code> / <code>RA_LLM_MODEL</code> 后重启即可。
+</div>
+{% endif %}
+{% if err %}<div class="banner banner-bad">{{ err }}</div>{% endif %}
+
+<div class="chat-grid">
+  <section class="card chat">
+    <div class="transcript">
+      {% if not turns or turns | length <= 1 %}
+      <div class="msg msg-assistant">
+        <div class="msg-body">解析完了。右边是我整理出的疑问。你可以直接回答某一条（比如「那个是 2023.10 结束」），
+        或者告诉我简历里还没有的东西（比如「我还会 PyTorch」）。</div>
+      </div>
+      {% endif %}
+      {% for t in turns if t.content %}
+        <div class="msg msg-{{ t.role }}">
+          <div class="msg-body">{{ t.content }}</div>
+          {% if t.role == 'assistant' and t.patches %}
+            <div class="patch-card {{ 'patch-done' if t.accepted == 1 else ('patch-dropped' if t.accepted == 0 else '') }}">
+              <div class="patch-title">
+                建议写入 {{ t.patches | length }} 处
+                {% if t.accepted == 1 %}<span class="tag tag-ok">已写入</span>{% endif %}
+                {% if t.accepted == 0 %}<span class="tag">已放弃</span>{% endif %}
+              </div>
+              <ul>
+                {% for p in t.patches %}
+                <li>
+                  {% if p.op == 'set_profile' %}
+                    基本信息 · {{ p.field }} → <b>{{ p.value }}</b>
+                  {% elif p.op == 'add_bullet' %}
+                    新增要点：<b>{{ p.text }}</b>
+                  {% elif p.op == 'add_item' %}
+                    新增条目：<b>{{ p.org or '' }} {{ p.role or '' }} {{ p.start or '' }} {{ p.end or '' }}</b>
+                  {% elif p.op == 'set_meta' %}
+                    {{ p.key }} → <b>{{ p.value or p.text }}</b>
+                  {% else %}
+                    {{ p.op }}
+                  {% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+              {% if t.accepted is none %}
+              <div class="patch-actions">
+                <form method="post" action="/resumes/{{ resume.id }}/dialogue/accept/{{ t.id }}" class="inline">
+                  <button class="btn btn-sm" type="submit">确认写入</button>
+                </form>
+                <form method="post" action="/resumes/{{ resume.id }}/dialogue/reject/{{ t.id }}" class="inline">
+                  <button class="btn btn-sm btn-ghost" type="submit">放弃</button>
+                </form>
+              </div>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+
+    <form method="post" action="/resumes/{{ resume.id }}/dialogue/say" class="chat-input"
+          onsubmit="return beforeSend(this)">
+      <textarea name="text" id="sayText" rows="2"
+                placeholder="回答某个疑问，或直接说：我还会 PyTorch / 我在 XX 实习过三个月……"
+                {{ 'disabled' if not has_model }}></textarea>
+      <button class="btn" type="submit" id="sayBtn" {{ 'disabled' if not has_model }}>发送</button>
+    </form>
+  </section>
+
+  <aside class="card gap-panel">
+    <h2>Agent 的疑问 <span class="muted small">{{ doubts.doubts | length }} 条</span></h2>
+    {% if doubts.doubts %}
+      <div class="doubt-list">
+        {% for d in doubts.doubts %}
+          <div class="doubt-item doubt-{{ d.category }}">
+            <span class="doubt-cat">{{ d.category_cn }}</span>
+            <button class="doubt-q" type="button" onclick="fillQuestion(this)"
+                    data-q="{{ d.question }}" {{ 'disabled' if not has_model }}>{{ d.question }}</button>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="hint">点某个疑问，问题会填到输入框里，你直接回答即可。</p>
+    {% else %}
+      <p class="muted">没有明显疑问。你可以直接补充新内容，或去编辑页。</p>
+    {% endif %}
+  </aside>
+</div>
+
+<script>
+  const box = document.querySelector('.transcript');
+  if (box) box.scrollTop = box.scrollHeight;
+
+  function fillQuestion(btn) {
+    const ta = document.getElementById('sayText');
+    if (!ta) return;
+    ta.value = btn.dataset.q + ' 答案是：';
+    ta.focus();
+  }
+
+  function beforeSend(form) {
+    const btn = document.getElementById('sayBtn');
+    btn.disabled = true;
+    btn.textContent = '思考中…';
+  }
+</script>
+
+{% endblock %}

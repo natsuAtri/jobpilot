@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}简历 · JobPilot{% endblock %}
+{% block content %}
+
+<h1 class="page-title">简历</h1>
+
+<section class="card">
+  <h2>导入简历 PDF</h2>
+  <form method="post" action="/resumes/import" enctype="multipart/form-data" class="inline-form" data-busy="正在解析简历…">
+    <label class="file-picker">
+      <input type="file" name="file" accept="application/pdf,.pdf" required
+             onchange="document.getElementById('fileName').textContent = this.files[0]?.name || '未选择文件'">
+      <span class="file-picker-btn">选择 PDF 文件</span>
+      <span class="file-picker-name" id="fileName">未选择文件</span>
+    </label>
+    <button class="btn" type="submit">导入并解析</button>
+  </form>
+  <p class="hint">解析出的是草稿，逐项校对后才能用于投递。扫描件（无文本层）暂不支持。</p>
+  <form method="post" action="/resumes/blank" style="margin-top:12px">
+    <button class="btn btn-ghost btn-sm" type="submit">没有现成简历？从零创建</button>
+  </form>
+</section>
+
+{% if items %}
+<section class="card">
+  <h2>已有简历 {{ items | length }} 份</h2>
+  <table class="table">
+    <thead><tr><th>标题</th><th>类型</th><th>状态</th><th>章节</th><th>创建时间</th><th></th></tr></thead>
+    <tbody>
+    {% for r in items %}
+      <tr>
+        <td><a href="/resumes/{{ r.id }}">{{ r.title }}</a></td>
+        <td class="muted">{{ {'imported':'导入','generated':'生成'}.get(r.kind, r.kind) }}</td>
+        <td>
+          {% if r.parse_status == 'verified' %}
+            <span class="tag tag-ok">已校对</span>
+          {% else %}
+            <span class="tag">待校对</span>
+          {% endif %}
+        </td>
+        <td class="muted">{{ r.section_count }}</td>
+        <td class="muted mono">{{ r.created_at }}</td>
+        <td class="right">
+          <form method="post" action="/resumes/{{ r.id }}/delete" class="inline">
+            <button class="btn btn-sm btn-ghost" type="submit">删除</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}

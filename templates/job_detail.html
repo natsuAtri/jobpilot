@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} · 匹配{% endblock %}
+{% block content %}
+
+<div class="editor-head">
+  <div>
+    <h1 class="page-title">{{ job.title }}</h1>
+    <div class="muted small">
+      <span class="tag {{ {'campus':'tag-ok','social':'tag-bad','intern':'tag','unknown':''}.get(job.job_type, '') }}">
+        {{ {'campus':'校招','social':'社招','intern':'实习','unknown':'未知'}.get(job.job_type, job.job_type) }}
+      </span>
+      {{ job.company or '未填公司' }}
+      {% if job.city %} · {{ job.city }}{% endif %}
+      {% if job.url %} · <a href="{{ job.url }}" target="_blank" rel="noreferrer">原始链接</a>{% endif %}
+    </div>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-sm" href="/jobs/{{ job.id }}/generate">生成定制简历</a>
+    <a class="btn btn-sm" href="/jobs/{{ job.id }}/apply">投递</a>
+    <a class="btn btn-ghost btn-sm" href="/jobs">返回岗位</a>
+  </div>
+</div>
+
+{% if not resumes %}
+<div class="card card-accent">
+  <h2>还没有简历</h2>
+  <p class="muted">匹配需要一份简历。</p>
+  <a class="btn" href="/resumes">去导入</a>
+</div>
+{% else %}
+
+<section class="card">
+  <h2>用哪份简历匹配</h2>
+  <form method="post" action="/jobs/{{ job.id }}/match" class="inline-form"
+        data-busy="匹配中：规则打分 + 语义检索，首次加载语义模型约 10–30 秒，请稍候…">
+    <select name="resume_id">
+      {% for r in resumes %}
+        <option value="{{ r.id }}" {{ 'selected' if r.id == resume_id else '' }}>
+          {{ r.title }}（{{ '已校对' if r.parse_status == 'verified' else '待校对' }}）
+        </option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-sm" type="submit">{{ '重新匹配' if match else '开始匹配' }}</button>
+    {% if not match %}<span class="muted small">规则打分 + 语义检索（首次需加载模型）</span>{% endif %}
+  </form>
+</section>
+
+{% if match %}
+<section class="card">
+  <div class="score-head">
+    <div class="score-num">{{ '%.0f' % match.total }}<span>分</span></div>
+    <div class="score-meta">
+      {% set edu = match.education_status %}
+      <span class="badge badge-{{ 'ok' if edu in ('meet','exceed') else ('warn' if edu == 'below' and match.education_soft else ('bad' if edu == 'below' else 'mute')) }}">
+        学历 {{ {'below':'不满足','meet':'符合','exceed':'高于要求','unknown':'未知'}[edu] }}{% if edu == 'below' and match.education_soft %}（软性）{% endif %}
+      </span>
+      <span class="muted small">匹配分只由下列维度加权得出，不含学历</span>
+    </div>
+  </div>
+
+  <div class="dims">
+    {% for d in match.dimensions %}
+    <div class="dim">
+      <div class="dim-top">
+        <span class="dim-label">{{ d.label }}</span>
+        <span class="dim-val">{{ '%.0f' % (d.value * 100) }}</span>
+      </div>
+      <div class="bar"><i style="width: {{ '%.0f' % (d.value * 100) }}%"></i></div>
+      <div class="dim-note">{{ d.note }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if match.notes %}
+  <div class="match-notes">
+    {% for n in match.notes %}<div class="banner banner-warn">{{ n }}</div>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>关键词覆盖</h2>
+  {% set cov = match.keyword_coverage %}
+  <div class="chips">
+    {% for s in cov.hit %}<span class="chip chip-hit">{{ s }}</span>{% endfor %}
+    {% for s in cov.partial %}<span class="chip chip-partial">{{ s }}</span>{% endfor %}
+    {% for s in cov.miss %}<span class="chip chip-miss">{{ s }}</span>{% endfor %}
+  </div>
+  <p class="hint">绿=命中，黄=同类可替代，红=缺失。</p>
+</section>
+
+{% if match.evidence %}
+<section class="card">
+  <h2>语义匹配证据</h2>
+  <p class="hint">用语义检索把 JD 要求和简历片段对齐——即使措辞不同也能对上。</p>
+  <div class="evidence-list">
+    {% for e in match.evidence %}
+    <div class="evidence-item">
+      <div class="ev-jd"><span class="tag">JD 要求</span> {{ e.jd }}</div>
+      <div class="ev-resume"><span class="tag tag-ok">{{ e.label }}</span> {{ e.resume }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if match.gaps %}
+<section class="card">
+  <h2>差距 {{ match.gaps | length }} 条</h2>
+  <table class="table">
+    <thead><tr><th>缺什么</th><th>是哪一类</th><th>怎么办</th></tr></thead>
+    <tbody>
+    {% for g in match.gaps %}
+      <tr>
+        <td><strong>{{ g.what }}</strong></td>
+        <td>
+          <span class="tag {{ 'tag-bad' if g.type == '不具备' else '' }}">{{ g.type }}</span>
+        </td>
+        <td class="muted">{{ g.action }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">「未体现」是简历没写，「不具备」是真没有，「无法判断」是信息不足——三种情况的处理方式完全不同。</p>
+</section>
+{% endif %}
+{% endif %}
+
+<section class="card">
+  <h2>JD 原文</h2>
+  <pre class="jd">{{ job.description_raw }}</pre>
+</section>
+
+{% endif %}
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}导出失败 · JobPilot{% endblock %}
+{% block content %}
+
+<h1 class="page-title">导出被拦下了</h1>
+<p class="lede">
+  PDF 生成成功，但把文字读回来比对时发现不一致。这种情况多半是字体映射问题，
+  交给 ATS 会读到错字，所以没有生成下载。
+</p>
+
+<div class="card card-accent">
+  <h2>校验结果</h2>
+  <p><strong>{{ result.message }}</strong></p>
+  <p class="muted small">页数 {{ result.pages }} · 页面尺寸 {{ result.page_size[0] }}×{{ result.page_size[1] }} · 检查 {{ result.checked }} 段</p>
+</div>
+
+{% if result.missing %}
+<div class="card">
+  <h2>没有出现在 PDF 里的内容</h2>
+  <ul class="bul">
+    {% for m in result.missing[:10] %}
+      <li class="mono">{{ m[:80] }}</li>
+    {% endfor %}
+  </ul>
+  <p class="hint">常见原因：当前机器上没有 MiSans / 微软雅黑，回退到了 Noto Sans SC——
+  该字体在 Chromium 里导出会把部分汉字写成康熙部首码位。</p>
+</div>
+{% endif %}
+
+<a class="btn" href="/resumes/{{ resume.id }}">返回简历</a>
+
+{% endblock %}

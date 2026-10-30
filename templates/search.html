@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}搜索岗位 · JobPilot{% endblock %}
+{% block content %}
+
+<h1 class="page-title">搜索岗位</h1>
+<p class="lede">在前程无忧按关键词搜索公开职位，自动按简历匹配打分、从高到低排序。
+    JD 详情需要登录，点「详情」会在你自己的浏览器里打开。</p>
+
+{% if not resumes %}
+<div class="card card-accent">
+  <h2>先导入一份简历</h2>
+  <p class="muted">匹配打分需要一份简历做参照。</p>
+  <a class="btn" href="/resumes">去导入</a>
+</div>
+{% else %}
+
+<section class="card">
+  <form method="post" action="/jobs/search/start" class="inline-form">
+    <label style="flex:1">关键词<input name="keyword" required
+        placeholder="如：python / 后端开发 / 机器学习" value="{{ keyword or '' }}"></label>
+    <label style="width:140px">城市<input name="city" placeholder="不限" value="{{ city or '' }}"></label>
+    <label style="width:200px">用哪份简历
+      <select name="resume_id">
+        {% for r in resumes %}
+          <option value="{{ r.id }}" {{ 'selected' if r.id | string == resume_id else '' }}>{{ r.title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <input type="hidden" name="limit" value="20">
+    <button class="btn" type="submit">搜索并打分</button>
+  </form>
+  <p class="hint">第一次搜索会启动浏览器，约 5–10 秒，结束后按匹配度从高到低排列。</p>
+</section>
+
+{% if run %}
+<section class="card">
+  <h2>搜索进行中</h2>
+  <div id="progress">
+    <div class="spinner"></div>
+    <span id="step">准备中…</span>
+  </div>
+</section>
+{% endif %}
+
+<section class="card" id="results" style="display:none">
+  <div class="rewrite-head">
+    <h2 style="margin:0">搜索结果</h2>
+    <span class="muted small" id="count"></span>
+  </div>
+  <form method="post" action="/jobs/search/import" id="importForm">
+    <input type="hidden" name="jobs" id="jobsJson" value="[]">
+    <table class="table" id="jobTable">
+      <thead><tr><th><input type="checkbox" id="checkAll"></th><th>匹配分</th><th>职位</th><th>公司</th><th>薪资</th><th>地点</th><th>经验</th><th>学历</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="sticky-actions">
+      <button class="btn" type="submit">导入选中到岗位库</button>
+      <span class="muted small">导入后可查看完整打分与差距分析</span>
+    </div>
+  </form>
+</section>
+
+{% endif %}
+
+<script>
+  const runId = {{ run | tojson if run else 'null' }};
+
+  async function poll() {
+    const resp = await fetch(`/jobs/search/status/${runId}`);
+    const s = await resp.json();
+    document.getElementById('step').textContent = s.step || s.status;
+    if (s.status === 'running') {
+      setTimeout(poll, 1500);
+    } else if (s.status === 'done') {
+      renderJobs(s.jobs);
+    } else {
+      const el = document.getElementById('step');
+      el.textContent = '出错：' + (s.error || s.status);
+      el.style.color = 'var(--bad)';
+    }
+  }
+
+  function esc(t) {
+    return (t || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderJobs(jobs) {
+    document.getElementById('progress').style.display = 'none';
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('count').textContent = `共 ${jobs.length} 个，按匹配度排序`;
+    const tbody = document.querySelector('#jobTable tbody');
+    tbody.innerHTML = jobs.map((j, i) => `
+      <tr>
+        <td><input type="checkbox" class="pick" data-json='${esc(JSON.stringify(j))}'></td>
+        <td><span class="score">${j.score == null ? '—' : j.score}</span></td>
+        <td>${esc(j.title)} <a href="${esc(j.url)}" target="_blank" rel="noreferrer" class="small">详情↗</a></td>
+        <td>${esc(j.company)}</td>
+        <td class="muted">${esc(j.salary)}</td>
+        <td class="muted">${esc(j.location)}</td>
+        <td class="muted">${esc(j.experience)}</td>
+        <td class="muted">${esc(j.education)}</td>
+      </tr>`).join('');
+    const all = document.getElementById('checkAll');
+    all.onchange = () => document.querySelectorAll('.pick').forEach(c => c.checked = all.checked);
+  }
+
+  document.getElementById('importForm').addEventListener('submit', () => {
+    const picked = [...document.querySelectorAll('.pick:checked')].map(c => JSON.parse(c.dataset.json));
+    document.getElementById('jobsJson').value = JSON.stringify(picked);
+  });
+
+  if (runId) poll();
+</script>
+
+{% endblock %}

@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Agent · JobPilot{% endblock %}
+{% block content %}
+
+<div class="chat-shell">
+  <div class="chat-top">
+    <div>
+      <div class="chat-title">Agent</div>
+      <div class="chat-sub">说目标、追问、改口都行，它记得你刚才在聊什么。</div>
+    </div>
+    <form method="post" action="/chat/clear" data-busy="清空中…">
+      <button class="btn btn-sm btn-ghost" type="submit">清空</button>
+    </form>
+  </div>
+
+  {% if not has_resume %}
+  <div class="empty-note">先导入一份简历，匹配和定制都需要它。<a href="/resumes">去导入 →</a></div>
+  {% else %}
+
+  <div class="chat-scroll" id="messages">
+    {% for m in messages %}
+    <div class="msg {{ 'msg-user' if m.role == 'user' else 'msg-assistant' }}">
+      <div class="msg-body" data-text="{{ m.content }}"></div>
+      {% if m.role == 'agent' and m.payload and m.payload.suggestions %}
+      <div class="sugs">
+        {% for s in m.payload.suggestions %}
+        <button type="button" class="sug-pill" data-send="{{ s }}">{{ s }}</button>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="msg-time">{{ m.created_at[11:16] if m.created_at else '' }}</div>
+    </div>
+    {% endfor %}
+
+    <div class="cand-panel" id="candidate-block"></div>
+  </div>
+
+  <form method="post" action="/chat" class="chat-composer" id="chatForm">
+    <input type="hidden" name="resume_id" value="{{ resume_id }}">
+    <textarea name="text" rows="2" placeholder="说点什么，比如：找北京的 AI 应用岗位，匹配 60 以上" required></textarea>
+    <button class="btn" type="submit">发送</button>
+  </form>
+  {% endif %}
+</div>
+
+<script>
+  const resumeId = {{ (resume_id or '') | tojson }};
+  const INITIAL_CANDIDATES = {{ (candidates or []) | tojson }};
+  const messagesEl = document.getElementById('messages');
+  const candidateEl = document.getElementById('candidate-block');
+  const form = document.getElementById('chatForm');
+  const input = form ? form.querySelector('textarea') : null;
+
+  function esc(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // 轻量渲染：链接、**加粗**、【小标题】、· 列表
+  function renderText(text) {
+    let html = esc(text)
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    const lines = html.split('\n');
+    const out = [];
+    let inList = false;
+    for (const line of lines) {
+      const t = line.trim();
+      if (t.startsWith('·') || /^\d+\.\s/.test(t)) {
+        if (!inList) { out.push('<ul class="reply-list">'); inList = true; }
+        out.push('<li>' + t.replace(/^·\s*/, '') + '</li>');
+        continue;
+      }
+      if (inList) { out.push('</ul>'); inList = false; }
+      if (/^【.+】$/.test(t)) {
+        out.push('<div class="reply-h">' + t + '</div>');
+      } else if (t) {
+        out.push('<div class="reply-p">' + t + '</div>');
+      }
+    }
+    if (inList) out.push('</ul>');
+    return out.join('');
+  }
+
+  function bubble(role, text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-assistant');
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    body.innerHTML = renderText(text);
+    wrap.appendChild(body);
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    time.textContent = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+    wrap.appendChild(time);
+    // 插在候选面板之前，不然会跑到候选列表下面
+    if (candidateEl && candidateEl.parentNode === messagesEl) {
+      messagesEl.insertBefore(wrap, candidateEl);
+    } else {
+      messagesEl.appendChild(wrap);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return wrap;
+  }
+
+  function typing(hint) {
+    const guess = hint || '';
+    let label = '正在处理…';
+    if (/找|搜/.test(guess)) label = '正在搜索岗位并匹配打分…（约 10–30 秒）';
+    else if (/定制/.test(guess)) label = '正在生成定制简历…（约 10–20 秒）';
+    else if (/适合|匹配吗|有戏/.test(guess)) label = '正在分析适配度…（约 3–8 秒）';
+    else if (/^投/.test(guess)) label = '正在打开岗位页…';
+    const wrap = document.createElement('div');
+    wrap.className = 'msg msg-assistant';
+    wrap.id = 'typing';
+    wrap.innerHTML =
+      '<div class="msg-body typing">' +
+      '<span class="dots"><i></i><i></i><i></i></span>' +
+      `<span class="typing-text">${label}</span>` +
+      '</div>';
+    // 插在候选面板之前，不然会跑到候选列表下面
+    if (candidateEl && candidateEl.parentNode === messagesEl) {
+      messagesEl.insertBefore(wrap, candidateEl);
+    } else {
+      messagesEl.appendChild(wrap);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return wrap;
+  }
+
+  function suggestions(wrap, items) {
+    if (!items || !items.length) return;
+    const box = document.createElement('div');
+    box.className = 'sugs';
+    items.forEach(s => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sug-pill';
+      b.textContent = s;
+      b.onclick = () => send(s);
+      box.appendChild(b);
+    });
+    wrap.appendChild(box);
+  }
+
+  const PREVIEW_COUNT = 5;
+  let candExpanded = false;
+  let lastCandidates = [];
+
+  function toggleCandidates() {
+    candExpanded = !candExpanded;
+    renderCandidates(lastCandidates);
+  }
+
+  function renderCandidates(cands) {
+    if (!candidateEl) return;
+    lastCandidates = cands || [];
+    if (!lastCandidates.length) { candidateEl.innerHTML = ''; return; }
+
+    const total = lastCandidates.length;
+    const shown = candExpanded ? lastCandidates : lastCandidates.slice(0, PREVIEW_COUNT);
+    const toggle = total > PREVIEW_COUNT
+      ? `<button type="button" class="cand-toggle" onclick="toggleCandidates()">${candExpanded ? '收起' : `展开全部 ${total} 个`}</button>`
+      : '';
+
+    candidateEl.innerHTML =
+      `<div class="cand-panel-head"><div class="cand-panel-title">当前候选<span>${total} 个</span></div>${toggle}</div>` +
+      shown.map(c => `
+        <div class="cand-row" data-idx="${c.index}">
+          <span class="cand-idx">${c.index}</span>
+          <span class="cand-name">${esc(c.title)}</span>
+          <span class="cand-meta">${esc(c.company || '')}${c.location ? ' · ' + esc(c.location) : ''}</span>
+          <span class="cand-score">${c.score != null ? c.score : '—'}</span>
+          <span class="cand-acts">
+            <button type="button" class="cand-btn" data-act="detail">详情</button>
+            <button type="button" class="cand-btn" data-act="tailor">定制</button>
+            <button type="button" class="cand-btn" data-act="apply">投递</button>
+          </span>
+          <div class="cand-jd" hidden>${esc(c.jd || '（没有抓到 JD 正文）')}</div>
+        </div>`).join('');
+
+    candidateEl.querySelectorAll('.cand-btn').forEach(btn => {
+      btn.onclick = () => {
+        const row = btn.closest('.cand-row');
+        const idx = row.dataset.idx;
+        const act = btn.dataset.act;
+        if (act === 'detail') {
+          const jd = row.querySelector('.cand-jd');
+          jd.hidden = !jd.hidden;
+          btn.textContent = jd.hidden ? '详情' : '收起';
+        } else if (act === 'tailor') {
+          send('定制第 ' + idx + ' 个');
+        } else if (act === 'apply') {
+          send('投第 ' + idx + ' 个');
+        }
+      };
+    });
+  }
+
+  async function send(text) {
+    if (!text || !text.trim()) return;
+    input.value = '';
+    bubble('user', text.trim());
+    const dots = typing(text);
+
+    const body = new URLSearchParams();
+    body.set('text', text.trim());
+    body.set('resume_id', resumeId);
+    try {
+      const resp = await fetch('/chat/send', {method: 'POST', body});
+      const data = await resp.json();
+      dots.remove();
+      const wrap = bubble('agent', data.reply || '（没有回复）');
+      suggestions(wrap, data.suggestions);
+      renderCandidates(data.candidates);
+    } catch (err) {
+      dots.remove();
+      bubble('agent', '请求失败：' + err.message);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // 初始化历史消息渲染
+  document.querySelectorAll('.msg-body[data-text]').forEach(el => {
+    el.innerHTML = renderText(el.dataset.text);
+  });
+  document.querySelectorAll('.sug-pill[data-send]').forEach(btn => {
+    btn.onclick = () => send(btn.dataset.send);
+  });
+  renderCandidates(INITIAL_CANDIDATES);
+  if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // 表单提交走 fetch，不整页刷新
+  if (form) {
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      send(input.value);
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send(input.value);
+      }
+    });
+  }
+
+  // 空对话时的开场建议
+  if (messagesEl && !messagesEl.querySelector('.msg')) {
+    const box = document.createElement('div');
+    box.className = 'onboarding';
+    box.innerHTML = '<div class="onboarding-title">你好，我是JobPilot。你可以这样说：</div>' +
+      '<div class="sugs">' + ['找北京的 AI 应用岗位', '定制是什么意思', '现在有什么', '看第 1 个的要求']
+        .map(s => `<button type="button" class="sug-pill" data-send="${s}">${s}</button>`).join('') + '</div>';
+    messagesEl.appendChild(box);
+    box.querySelectorAll('.sug-pill').forEach(b => b.onclick = () => send(b.dataset.send));
+  }
+</script>
+
+{% endblock %}

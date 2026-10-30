@@ -1,0 +1,53 @@
+"""本地启动脚本。
+
+    python run.py
+
+默认监听 127.0.0.1:8000，只对本机开放。
+
+依赖查找顺序：先看当前 Python 环境有没有装（标准 venv / 全局安装），
+没有再退回到项目目录下的 .venvlib。顺序不能反——如果把 .venvlib
+无条件插到 sys.path 最前面，它会遮蔽你自己 venv 里的同名包，
+而 .venvlib 是按某个特定 Python 版本编译的，混用会直接报导入错误。
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+_VENVLIB = BASE / ".venvlib"
+
+
+def _import_uvicorn():
+    try:
+        import uvicorn  # noqa: F401
+        return uvicorn
+    except ModuleNotFoundError:
+        pass
+
+    if _VENVLIB.is_dir():
+        sys.path.append(str(_VENVLIB))
+        try:
+            import uvicorn  # noqa: F811
+            return uvicorn
+        except ModuleNotFoundError:
+            pass
+
+    sys.exit(
+        "缺少依赖。请先安装：\n"
+        "    pip install -r requirements.txt\n"
+        "国内网络建议加镜像：\n"
+        "    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple"
+    )
+
+
+uvicorn = _import_uvicorn()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("RA_PORT", "8000"))
+    host = os.environ.get("RA_HOST", "127.0.0.1")
+    reload = os.environ.get("RA_RELOAD", "1") == "1"
+    print(f"JobPilot → http://{host}:{port}")
+    print("按 Ctrl+C 停止")
+    uvicorn.run("app.main:app", host=host, port=port, reload=reload)

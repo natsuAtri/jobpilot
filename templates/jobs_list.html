@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}岗位 · JobPilot{% endblock %}
+{% block content %}
+
+{% set TYPE_CN = {'campus':'校招','social':'社招','intern':'实习','unknown':'未知'} %}
+
+<h1 class="page-title">岗位</h1>
+<p class="lede">Agent 按关键词搜职位、按你的简历打分排序，你勾选想要的就导入。</p>
+
+<section class="card card-accent">
+  <h2>搜索职位</h2>
+  <form method="get" action="/jobs/search" class="inline-form">
+    <label style="flex:1">关键词<input name="keyword" placeholder="如：后端开发 / python / 机器学习"></label>
+    <button class="btn" type="submit">去搜索</button>
+  </form>
+  <p class="hint">在搜索页可以选简历、看按匹配度排序的结果。</p>
+</section>
+
+{% if jobs %}
+<section class="card">
+  <h2>已保存 {{ jobs | length }} 个岗位</h2>
+  <table class="table">
+    <thead><tr><th>岗位</th><th>类型</th><th>公司</th><th>城市</th><th>匹配</th><th></th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ j.id }}">{{ j.title }}</a></td>
+        <td>
+          <span class="tag {{ {'campus':'tag-ok','social':'tag-bad','intern':'tag','unknown':''}.get(j.job_type, '') }}">
+            {{ TYPE_CN.get(j.job_type, j.job_type) }}
+          </span>
+        </td>
+        <td class="muted">{{ j.company or '—' }}</td>
+        <td class="muted">{{ j.city or '—' }}</td>
+        <td>
+          {% if j.match_count %}
+            <span class="tag tag-ok">已匹配</span>
+          {% else %}
+            <span class="tag">未匹配</span>
+          {% endif %}
+        </td>
+        <td class="right">
+          <form method="post" action="/jobs/{{ j.id }}/delete" class="inline">
+            <button class="btn btn-sm btn-ghost" type="submit">删除</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<details class="card">
+  <summary class="summary-btn">手动添加（粘贴 JD）</summary>
+  <form method="post" action="/jobs" class="stack" style="margin-top:12px">
+    <div class="row3">
+      <label>岗位名称<input name="title" required placeholder="后端开发工程师"></label>
+      <label>公司<input name="company" placeholder="某某科技"></label>
+      <label>城市<input name="city" placeholder="西安"></label>
+    </div>
+    <div class="row2">
+      <label>类型
+        <select name="job_type">
+          <option value="unknown">未知</option>
+          <option value="campus">校招</option>
+          <option value="social">社招</option>
+          <option value="intern">实习</option>
+        </select>
+      </label>
+      <label>链接（可选）<input name="url" placeholder="https://..."></label>
+    </div>
+    <label>JD 正文<textarea name="description" rows="8" required
+        placeholder="把招聘页面上的「岗位职责」和「任职要求」粘进来，公司简介可以删掉"></textarea></label>
+    <div><button class="btn" type="submit">保存</button></div>
+  </form>
+</details>
+
+{% endblock %}

@@ -1,0 +1,254 @@
+"""简历：导入、校对、保存。"""
+from __future__ import annotations
+
+import re
+import uuid
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response
+
+from ..config import EXPORT_DIR, TMP_DIR, UPLOADS_DIR
+from ..models import ResumeDoc
+from ..parse import extract_pages, extract_rules, render_png
+from ..render import expected_fragments, render_html, verify_pdf
+from ..render.browser import BrowserError, print_to_pdf, screenshot_png
+from ..repo import resumes as repo
+from ..templating import templates
+
+router = APIRouter(prefix="/resumes")
+
+FIELD_RE = re.compile(r"^([simbl]):(\d+)(?::(\d+))?(?::(\d+))?$")
+
+
+from ..forms import SECTION_TYPES, apply_form
+
+
+# --------------------------------------------------------------------- 路由
+@router.get("")
+async def list_page(request: Request, msg: str | None = None):
+    return templates.TemplateResponse(
+        request, "resumes_list.html",
+        {"active": "resume", "items": repo.list_resumes(), "msg": msg},
+    )
+
+
+@router.post("/blank")
+async def create_blank():
+    """从零创建：建一份空简历，直接进对话补录。"""
+    doc = ResumeDoc()
+    resume_id = repo.create_resume(doc, kind="generated", title="新简历")
+    return RedirectResponse(f"/resumes/{resume_id}/dialogue?mode=scratch", status_code=303)
+
+
+@router.post("/import")
+async def import_pdf(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "只支持 PDF")
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    stored = UPLOADS_DIR / f"{uuid.uuid4().hex}.pdf"
+    stored.write_bytes(await file.read())
+
+    pages = extract_pages(stored)
+    if not pages or not any(p.lines for p in pages):
+        return RedirectResponse(
+            f"/resumes?err=这个 PDF 没有文本层，可能是扫描件（M1 暂不支持）", status_code=303
+        )
+
+    doc = extract_rules(pages)
+    # 规则只搭骨架；配了模型就让它按视觉行重排（失败自动退回规则结果）
+    from ..llm import registry
+    from ..parse.refine import refine
+
+    if registry.configured():
+        doc = await refine(pages, doc)
+    stem = Path(file.filename).stem
+    title = f"{doc.name} 的简历" if doc.name else stem
+    resume_id = repo.create_resume(doc, source_file=stored.name, title=title)
+    # 同步填充个人数据库
+    from ..repo import personal
+
+    personal.build_from_resume(doc)
+    # 先进入解析复核，而不是直接去编辑——让用户先回答 Agent 的疑问
+    msg = "简历已导入。先回答下面几个疑点，也可以直接去 Agent 让它帮你找岗位"
+    return RedirectResponse(f"/resumes/{resume_id}/dialogue?msg={msg}", status_code=303)
+
+
+@router.get("/{resume_id}")
+async def edit_page(request: Request, resume_id: int, msg: str | None = None):
+    doc = repo.load_doc(resume_id)
+    if doc is None:
+        raise HTTPException(404, "简历不存在")
+    with_file = repo.list_resumes()
+    row = next((r for r in with_file if r["id"] == resume_id), None)
+    return templates.TemplateResponse(
+        request,
+        "resume_edit.html",
+        {
+            "active": "resume",
+            "resume": row,
+            "doc": doc,
+            "section_types": list(SECTION_TYPES),
+            "page_count": _page_count(row["source_file"]) if row and row["source_file"] else 0,
+            "msg": msg,
+        },
+    )
+
+
+@router.get("/{resume_id}/page/{index}.png")
+async def page_image(resume_id: int, index: int):
+    row = next((r for r in repo.list_resumes() if r["id"] == resume_id), None)
+    if row is None or not row["source_file"]:
+        raise HTTPException(404, "没有原始文件")
+    path = UPLOADS_DIR / row["source_file"]
+    if not path.exists():
+        raise HTTPException(404, "原始文件已丢失")
+    try:
+        return Response(render_png(path, index, scale=1.6), media_type="image/png")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"渲染失败：{exc}") from exc
+
+
+@router.post("/{resume_id}")
+async def save(request: Request, resume_id: int):
+    doc = repo.load_doc(resume_id)
+    if doc is None:
+        raise HTTPException(404, "简历不存在")
+
+    form = await request.form()
+    doc = apply_form(doc, form)
+    action = (form.get("action") or "save").strip()
+
+    repo.replace_doc(resume_id, doc)
+    repo.update_profile(resume_id, doc)
+
+    if action == "verify":
+        repo.mark_verified(resume_id)
+        return RedirectResponse(f"/resumes/{resume_id}?msg=已标记为校对完成", status_code=303)
+    return RedirectResponse(f"/resumes/{resume_id}?msg=已保存", status_code=303)
+
+
+@router.get("/{resume_id}/preview")
+async def preview_resume(resume_id: int, variant: str = "design", theme: str = "ink"):
+    """简历编辑页左侧的实时预览（HTML 渲染，不转 PDF）。"""
+    from fastapi.responses import HTMLResponse
+
+    from ..render.html import render_html
+
+    doc = repo.load_doc(resume_id)
+    if doc is None:
+        raise HTTPException(404, "简历不存在")
+    return HTMLResponse(render_html(doc, theme=theme, variant="ats" if variant == "ats" else "design"))
+
+
+@router.post("/{resume_id}/fill-personal")
+async def fill_personal(resume_id: int):
+    from ..repo import personal
+
+    doc = repo.load_doc(resume_id)
+    if doc is None:
+        raise HTTPException(404, "简历不存在")
+    n = personal.apply_to_doc(doc)
+    if n:
+        repo.replace_doc(resume_id, doc)
+    return RedirectResponse(f"/resumes/{resume_id}?msg=从个人库补全 {n} 处", status_code=303)
+
+
+@router.post("/{resume_id}/delete")
+async def delete(resume_id: int):
+    removed = repo.delete_resume(resume_id)
+    msg = "已删除简历"
+    if removed:
+        msg += f"（连同 {removed} 条投递记录）"
+    return RedirectResponse(f"/resumes?msg={msg}", status_code=303)
+
+
+# --------------------------------------------------------------- 导出与预览
+VALID_VARIANTS = ("design", "ats")
+VALID_THEMES = ("ink", "graphite")
+
+
+def _load_or_404(resume_id: int) -> tuple[ResumeDoc, dict]:
+    doc = repo.load_doc(resume_id)
+    if doc is None:
+        raise HTTPException(404, "简历不存在")
+    row = next((r for r in repo.list_resumes() if r["id"] == resume_id), None)
+    return doc, row or {}
+
+
+@router.get("/{resume_id}/preview.png")
+async def preview_png(resume_id: int, variant: str = "design", theme: str = "ink"):
+    doc, _ = _load_or_404(resume_id)
+    variant = variant if variant in VALID_VARIANTS else "design"
+    theme = theme if theme in VALID_THEMES else "ink"
+    html = render_html(doc, theme=theme, variant=variant)
+    out = TMP_DIR / f"preview-{resume_id}-{variant}-{theme}.png"
+    try:
+        screenshot_png(html, out)
+    except BrowserError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return FileResponse(out, media_type="image/png")
+
+
+@router.get("/{resume_id}/export")
+async def export_pdf(
+    request: Request, resume_id: int, variant: str = "design", theme: str = "ink"
+):
+    doc, _ = _load_or_404(resume_id)
+    variant = variant if variant in VALID_VARIANTS else "design"
+    theme = theme if theme in VALID_THEMES else "ink"
+
+    html = render_html(doc, theme=theme, variant=variant)
+    out = EXPORT_DIR / f"resume-{resume_id}-{variant}-{theme}.pdf"
+    try:
+        print_to_pdf(html, out)
+    except BrowserError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+    # 硬性门禁：回读校验不通过就不交付，避免导出一份 ATS 读不对的简历
+    result = verify_pdf(out, expected_fragments(doc))
+    if not result.ok:
+        return templates.TemplateResponse(
+            request,
+            "export_failed.html",
+            {
+                "active": "resume",
+                "resume": {"id": resume_id},
+                "result": result,
+                "variant": variant,
+                "theme": theme,
+            },
+            status_code=500,
+        )
+
+    suffix = "" if variant == "design" else "-ATS"
+    filename = f"{doc.name or '简历'}-简历{suffix}.pdf"
+    return FileResponse(
+        out,
+        media_type="application/pdf",
+        filename=filename,
+        # 响应头只能是 latin-1，中文说明要编码后再放进去
+        headers={"X-Verify": "ok", "X-Verify-Detail": quote(result.message)},
+    )
+
+
+_PAGE_CACHE: dict[str, int] = {}
+
+
+def _page_count(source_file: str) -> int:
+    if source_file in _PAGE_CACHE:
+        return _PAGE_CACHE[source_file]
+    path = Path(UPLOADS_DIR) / source_file
+    if not path.exists():
+        return 0
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        count = len(pdf)
+    finally:
+        pdf.close()
+    _PAGE_CACHE[source_file] = count
+    return count

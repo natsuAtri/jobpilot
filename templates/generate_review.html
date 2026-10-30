@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}生成定制简历 · {{ job.title }}{% endblock %}
+{% block content %}
+
+<div class="editor-head">
+  <div>
+    <h1 class="page-title">生成定制简历</h1>
+    <div class="muted small">{{ job.title }} · 起草 agent 改写、评审 agent 对账、四道闸门把关，最后由你终审。</div>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-ghost btn-sm" href="/jobs/{{ job.id }}">回岗位</a>
+  </div>
+</div>
+
+{% if err %}<div class="banner banner-bad">{{ err }}</div>{% endif %}
+
+{% if not resumes %}
+<div class="card card-accent">
+  <h2>还没有简历</h2>
+  <a class="btn" href="/resumes">去导入</a>
+</div>
+{% else %}
+
+<section class="card">
+  <form method="post" action="/jobs/{{ job.id }}/generate" class="inline-form" data-busy="生成中：双 agent 改写 + 评审，约 10–30 秒…">
+    <label style="width:240px">用哪份简历
+      <select name="resume_id">
+        {% for r in resumes %}
+          <option value="{{ r.id }}" {{ 'selected' if r.id == resume_id else '' }}>{{ r.title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-sm" type="submit">{{ '重新生成' if items else '开始生成' }}</button>
+    {% if items %}<span class="muted small">共 {{ items | length }} 条候选</span>{% endif %}
+  </form>
+
+  {% if items %}
+  <form method="post" action="/jobs/{{ job.id }}/generate/opinion" class="inline-form" style="margin-top:12px" data-busy="按意见重新起草中，约 10–30 秒…">
+    <input type="hidden" name="resume_id" value="{{ resume_id }}">
+    <label style="flex:1">有修改意见？直接说<input name="opinion"
+        placeholder="如：突出 Python 相关经历，弱化手语项目"></label>
+    <button class="btn btn-sm" type="submit">按意见改一轮</button>
+  </form>
+  {% endif %}
+</section>
+
+{% if suggestions %}
+<section class="card card-accent">
+  <h2>优化建议 · 该补什么（{{ suggestions | length }} 条）</h2>
+  <p class="hint">改写只能换说法；这些是「简历该补什么」——只在你确实做过时补，不要编造。</p>
+  {% for s in suggestions %}
+  <div class="suggest-item">
+    <div class="suggest-head"><b>{{ s.title }}</b></div>
+    {% if s.why %}<div class="suggest-line"><span class="suggest-k">为什么</span>{{ s.why }}</div>{% endif %}
+    {% if s.how %}<div class="suggest-line"><span class="suggest-k">怎么写</span>{{ s.how }}</div>{% endif %}
+    <button type="button" class="btn btn-sm" onclick="openSuggest(this)"
+            data-title="{{ s.title }}" data-how="{{ s.how }}"
+            data-section="{{ s.section or 'project' }}">写进简历</button>
+  </div>
+  {% endfor %}
+</section>
+{% elif items %}
+<div class="banner banner-warn" style="display:flex;align-items:center;gap:12px;justify-content:space-between">
+  <span>这次没有生成「优化建议」，可能是模型调用失败。</span>
+  <form method="post" action="/jobs/{{ job.id }}/generate/suggest/regen" data-busy="正在生成优化建议…">
+    <input type="hidden" name="resume_id" value="{{ resume_id }}">
+    <button class="btn btn-sm" type="submit">重新生成建议</button>
+  </form>
+</div>
+{% endif %}
+
+<div id="suggestModal" class="modal" hidden>
+  <form method="post" action="/jobs/{{ job.id }}/generate/suggest/add" class="modal-card" data-busy="正在写入简历…">
+    <h3 id="suggestModalTitle">写进简历</h3>
+    <input type="hidden" name="resume_id" value="{{ resume_id }}">
+    <input type="hidden" name="title" id="suggestTitleInput">
+    <input type="hidden" name="section" id="suggestSectionInput">
+    <label>具体内容（可以用建议里的写法，也可以自己改）
+      <textarea name="how" id="suggestHowInput" rows="7"></textarea>
+    </label>
+    <div class="modal-actions">
+      <button type="submit" class="btn btn-sm">加到简历</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeSuggest()">取消</button>
+    </div>
+  </form>
+</div>
+
+<script>
+  function openSuggest(btn) {
+    document.getElementById('suggestTitleInput').value = btn.dataset.title || '';
+    document.getElementById('suggestHowInput').value = btn.dataset.how || '';
+    document.getElementById('suggestSectionInput').value = btn.dataset.section || 'project';
+    document.getElementById('suggestModalTitle').textContent = '写进简历：' + (btn.dataset.title || '');
+    document.getElementById('suggestModal').hidden = false;
+  }
+  function closeSuggest() {
+    document.getElementById('suggestModal').hidden = true;
+  }
+  document.getElementById('suggestModal')?.addEventListener('click', e => {
+    if (e.target.id === 'suggestModal') closeSuggest();
+  });
+</script>
+
+{% if items %}
+<section class="card">
+  <div class="rewrite-head">
+    <h2 style="margin:0">终审 {{ items | length }} 条</h2>
+    <span class="muted small">已采用 {{ accepted }} 条</span>
+  </div>
+
+  <div class="gen-list">
+    {% for it in items %}
+    <div class="gen-item {{ 'is-blocked' if it.blocked else '' }}">
+      <div class="rw-meta">
+        <span class="tag">{{ it.label or it.source_id }}</span>
+        {% if it.priority == 'high' %}<span class="tag tag-ok">高价值</span>{% endif %}
+        {% if it.priority == 'low' %}<span class="tag">仅措辞</span>{% endif %}
+        {% if it.blocked %}<span class="tag tag-bad">被闸门拦截</span>{% endif %}
+        {% if it.accepted == 1 %}<span class="tag tag-ok">已采用</span>{% endif %}
+        {% if it.accepted == 0 %}<span class="tag">未采用</span>{% endif %}
+        {% if it.manual %}<span class="tag tag-ok">已手动修改</span>{% endif %}
+      </div>
+
+      <div class="gen-orig">原文：{{ it.original }}</div>
+
+      {% if it.blocked %}
+        <div class="banner banner-bad" style="margin:8px 0">改写出界：{{ it.checks | selectattr('ok', 'equalto', false) | map(attribute='name') | join('、') }}。不能采用。</div>
+      {% elif it.rewritten != it.original %}
+        <div class="gen-draft">改写：<strong>{{ it.rewritten }}</strong></div>
+      {% else %}
+        <div class="muted small">这条已经够贴，无需改动。</div>
+      {% endif %}
+
+      {% if it.critique %}<div class="gen-critique">评审：{{ it.critique }}</div>{% endif %}
+
+      <div class="gates">
+        {% for c in it.checks %}
+          <span class="gate {{ 'gate-ok' if c.ok else 'gate-bad' }}" title="{{ c.detail }}">
+            {{ '✓' if c.ok else '✕' }} {{ c.name }}
+          </span>
+        {% endfor %}
+      </div>
+
+      <div class="gen-actions">
+        <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/edit" class="gen-edit">
+          <input type="hidden" name="resume_id" value="{{ resume_id }}">
+          <textarea name="text" rows="2">{{ it.manual or it.rewritten }}</textarea>
+          <button class="btn btn-sm btn-ghost" type="submit">保存修改</button>
+        </form>
+        <div class="gen-buttons">
+          <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/accept">
+            <input type="hidden" name="resume_id" value="{{ resume_id }}">
+            <button class="btn btn-sm" type="submit" {{ 'disabled' if it.blocked }}>采用</button>
+          </form>
+          <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/reject">
+            <input type="hidden" name="resume_id" value="{{ resume_id }}">
+            <button class="btn btn-sm btn-ghost" type="submit">不用</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <form method="post" action="/jobs/{{ job.id }}/generate/accept-all" class="inline-form" style="margin-top:14px">
+    <input type="hidden" name="resume_id" value="{{ resume_id }}">
+    <button class="btn btn-sm" type="submit">一键采用全部通过校验的条目</button>
+    <span class="muted small">只采用三守恒通过、且有实质改动的条目；被拦截的不会采用。</span>
+  </form>
+
+  <form method="post" action="/jobs/{{ job.id }}/generate/save" class="tailor-save">
+    <input type="hidden" name="resume_id" value="{{ resume_id }}">
+    <button class="btn" type="submit" {{ 'disabled' if accepted == 0 }}>生成最终简历</button>
+    <span class="muted small">采用「已采用」或「已手动修改」的内容，生成一份新的定制简历，不影响原简历。</span>
+  </form>
+</section>
+{% endif %}
+
+{% endif %}
+{% endblock %}

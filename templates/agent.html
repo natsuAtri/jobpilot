@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Agent · JobPilot{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Agent</h1>
+<p class="lede">说一句目标，它自己搜索、按匹配筛选、为入选岗位生成定制简历，停在待投队列等你确认。</p>
+
+{% if not resumes %}
+<div class="card card-accent">
+  <h2>先导入一份简历</h2>
+  <a class="btn" href="/resumes">去导入</a>
+</div>
+{% else %}
+
+<section class="card">
+  <form method="post" action="/agent/start" class="stack" data-busy="Agent 正在启动…">
+    <label>目标（一句话）
+      <textarea name="goal" rows="2" placeholder="例：找北京的 AI 应用岗位，匹配 80 以上，准备 5 个"></textarea>
+    </label>
+    <label style="max-width:280px">用哪份简历
+      <select name="resume_id">
+        {% for r in resumes %}
+          <option value="{{ r.id }}" {{ 'selected' if r.id == resume_id else '' }}>{{ r.title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div><button class="btn" type="submit">让 Agent 开始跑</button></div>
+  </form>
+</section>
+
+<section class="card" id="agent-run" style="display:none">
+  <div class="gen-status">
+    <div class="spinner"></div>
+    <span id="agent-status-text">运行中…</span>
+  </div>
+  <div class="trace-shell theme-paper" style="margin-bottom:16px">
+    <ol class="trace" id="agent-trace"></ol>
+  </div>
+  <div id="agent-queue"></div>
+</section>
+
+{% endif %}
+
+<script>
+  const runId = {{ (run_id or '') | tojson }};
+  const resumeId = {{ (resume_id or '') | tojson }};
+  const STAGE_LABEL = { parse: '解析', search: '搜索', filter: '筛选', tailor: '定制', finish: '完成' };
+  const traceEl = document.getElementById('agent-trace');
+  const queueEl = document.getElementById('agent-queue');
+
+  function esc(t) {
+    return (t || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function detailHtml(step) {
+    if (!step.detail || !step.detail.length) return '';
+    return '<ul class="trace-detail">' + step.detail.map(d => {
+      if (typeof d === 'string') return `<li>${esc(d)}</li>`;
+      if (d.title !== undefined) return `<li>${esc(d.title)} <span class="muted">${esc(d.company || '')}</span> ${d.score != null ? '<span class="tag">' + d.score + ' 分</span>' : ''}</li>`;
+      return `<li>${esc(JSON.stringify(d))}</li>`;
+    }).join('') + '</ul>';
+  }
+
+  function renderQueue(queue) {
+    if (!queue.length) { queueEl.innerHTML = ''; return; }
+    queueEl.innerHTML = '<h2>待投队列</h2>' + queue.map(item => `
+      <div class="gen-item">
+        <div class="rw-meta">
+          <span class="tag">${esc(item.title)}</span>
+          <span class="muted small">${esc(item.company || '')}${item.city ? ' · ' + esc(item.city) : ''}</span>
+          <span class="tag tag-ok">${item.score} 分</span>
+        </div>
+        <div class="muted small">${item.candidates} 条候选 · ${item.passed} 条有实质改动</div>
+        <div class="gen-buttons" style="margin-top:8px">
+          <a class="btn btn-sm" href="/jobs/${item.job_id}/generate?resume_id=${resumeId}">去终审</a>
+          <a class="btn btn-sm btn-ghost" href="/jobs/${item.job_id}/apply">投递</a>
+        </div>
+      </div>`).join('');
+  }
+
+  function render(state) {
+    document.getElementById('agent-run').style.display = 'block';
+    traceEl.innerHTML = state.steps.map(s => `
+      <li class="trace-step stage-${esc(s.stage)}">
+        <span class="trace-at">${esc(s.at)}</span>
+        <div class="trace-body">
+          <div class="trace-msg"><span class="trace-stage">${esc(STAGE_LABEL[s.stage] || s.stage)}</span> ${esc(s.message)}</div>
+          ${detailHtml(s)}
+        </div>
+      </li>`).join('');
+    renderQueue(state.queue || []);
+
+    if (state.status === 'done') {
+      document.getElementById('agent-status-text').textContent = '完成';
+      document.querySelector('.gen-status .spinner')?.remove();
+      return true;
+    }
+    if (state.status === 'error') {
+      document.getElementById('agent-status-text').textContent = '出错：' + (state.error || '未知');
+      document.querySelector('.gen-status .spinner')?.remove();
+      return true;
+    }
+    return false;
+  }
+
+  async function poll() {
+    const resp = await fetch(`/agent/status/${runId}`);
+    const state = await resp.json();
+    if (!render(state)) setTimeout(poll, 1500);
+  }
+
+  if (runId) poll();
+</script>
+
+{% endblock %}

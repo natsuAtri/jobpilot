@@ -1,0 +1,13 @@
+﻿# 核心依赖（不接模型 / 不用语义检索也能跑通导入、编辑、导出、匹配）
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9
+pydantic>=2.7
+pypdfium2>=4.30
+playwright>=1.47
+httpx>=0.27
+
+# 语义检索 / 精排（可选，约 2.3GB 模型）
+# 不装的话：语义证据与项目对口度会自动降级，其余功能不受影响
+#   pip install -r requirements-rag.txt

@@ -1,0 +1,268 @@
+"""简历的读写。
+
+写入策略：整份替换（删旧章节再插新）。单人单机场景下最简单，
+也不会出现「改了一半」的中间态。
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from ..db import get_conn, now_local
+from ..models import Bullet, Item, ResumeDoc, Section, SectionType
+
+
+def ensure_profile(name: str = "") -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM profile ORDER BY id LIMIT 1").fetchone()
+        if row:
+            return int(row["id"])
+        cur = conn.execute("INSERT INTO profile(name) VALUES (?)", (name,))
+        return int(cur.lastrowid)
+
+
+def create_resume(
+    doc: ResumeDoc,
+    *,
+    source_file: str | None = None,
+    kind: str = "imported",
+    title: str = "",
+    profile_id: int | None = None,
+    base_resume_id: int | None = None,
+) -> int:
+    pid = profile_id or ensure_profile(doc.name)
+
+    # 单份简历：同一 kind 只保留一份，重复导入/生成时原地覆盖，
+    # 不再产生「（2）（3）」这种重复列表项。
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM resume WHERE kind = ? ORDER BY id LIMIT 1", (kind,)
+        ).fetchone()
+        if existing:
+            resume_id = int(existing["id"])
+            conn.execute(
+                "UPDATE resume SET title = ?, source_file = ?, parse_status = 'parsed', "
+                "base_resume_id = ?, created_at = ? WHERE id = ?",
+                (title or (doc.name + " 的简历"), source_file, base_resume_id,
+                 now_local(), resume_id),
+            )
+        else:
+            base_title = title or (doc.name + " 的简历")
+            cur = conn.execute(
+                "INSERT INTO resume(profile_id, kind, title, source_file, parse_status, "
+                "base_resume_id, created_at) VALUES (?, ?, ?, ?, 'parsed', ?, ?)",
+                (pid, kind, base_title, source_file, base_resume_id, now_local()),
+            )
+            resume_id = int(cur.lastrowid)
+    # 解析出的联系方式必须落库，否则校对界面里就是空的
+    update_profile(resume_id, doc)
+    replace_doc(resume_id, doc)
+    return resume_id
+
+
+def _unique_title(conn, base: str) -> str:
+    """同名校验：重名时追加序号，避免列表里分不清两份简历。"""
+    title = base
+    n = 1
+    while conn.execute("SELECT 1 FROM resume WHERE title = ?", (title,)).fetchone():
+        n += 1
+        title = f"{base}（{n}）"
+    return title
+
+
+def replace_doc(resume_id: int, doc: ResumeDoc) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM resume_section WHERE resume_id = ?", (resume_id,))
+        for s_index, section in enumerate(doc.sections):
+            cur = conn.execute(
+                "INSERT INTO resume_section(resume_id, type, title_override, order_index) "
+                "VALUES (?, ?, ?, ?)",
+                (resume_id, section.type, section.title, s_index),
+            )
+            section_id = int(cur.lastrowid)
+            for i_index, item in enumerate(section.items):
+                cur = conn.execute(
+                    "INSERT INTO resume_item(section_id, org, role, location, start_date, "
+                    "end_date, meta_json, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        section_id,
+                        item.org,
+                        item.role,
+                        item.location,
+                        item.start,
+                        item.end,
+                        json.dumps(item.meta, ensure_ascii=False),
+                        i_index,
+                    ),
+                )
+                item_id = int(cur.lastrowid)
+                for b_index, bullet in enumerate(item.bullets):
+                    conn.execute(
+                        "INSERT INTO resume_bullet(item_id, text, order_index, tags_json, "
+                        "strength, metrics_json, source, user_utterance, source_bullet_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            item_id,
+                            bullet.text,
+                            b_index,
+                            json.dumps(bullet.tags, ensure_ascii=False),
+                            bullet.strength,
+                            json.dumps(bullet.metrics, ensure_ascii=False),
+                            bullet.source,
+                            bullet.user_utterance,
+                            bullet.source_bullet_id,
+                        ),
+                    )
+        conn.execute(
+            "UPDATE resume SET parse_status = 'parsed' WHERE id = ?", (resume_id,)
+        )
+
+
+def load_doc(resume_id: int) -> ResumeDoc | None:
+    with get_conn() as conn:
+        resume = conn.execute("SELECT * FROM resume WHERE id = ?", (resume_id,)).fetchone()
+        if resume is None:
+            return None
+        profile = conn.execute(
+            "SELECT * FROM profile WHERE id = ?", (resume["profile_id"],)
+        ).fetchone()
+        sections = conn.execute(
+            "SELECT * FROM resume_section WHERE resume_id = ? ORDER BY order_index",
+            (resume_id,),
+        ).fetchall()
+
+        doc = ResumeDoc(
+            name=profile["name"] if profile else "",
+            phone=profile["phone"] if profile else None,
+            email=profile["email"] if profile else None,
+            location=profile["location"] if profile else None,
+            links=json.loads(profile["links_json"]) if profile else {},
+        )
+        for srow in sections:
+            section = Section(
+                type=srow["type"],  # 由 Pydantic 按 Literal 校验
+                title=srow["title_override"],
+                order_index=srow["order_index"],
+            )
+            items = conn.execute(
+                "SELECT * FROM resume_item WHERE section_id = ? ORDER BY order_index",
+                (srow["id"],),
+            ).fetchall()
+            for irow in items:
+                item = Item(
+                    org=irow["org"],
+                    role=irow["role"],
+                    location=irow["location"],
+                    start=irow["start_date"],
+                    end=irow["end_date"],
+                    meta=json.loads(irow["meta_json"] or "{}"),
+                    order_index=irow["order_index"],
+                )
+                bullets = conn.execute(
+                    "SELECT * FROM resume_bullet WHERE item_id = ? ORDER BY order_index",
+                    (irow["id"],),
+                ).fetchall()
+                for brow in bullets:
+                    item.bullets.append(
+                        Bullet(
+                            text=brow["text"],
+                            order_index=brow["order_index"],
+                            tags=json.loads(brow["tags_json"] or "[]"),
+                            strength=brow["strength"],
+                            metrics=json.loads(brow["metrics_json"] or "[]"),
+                            source=brow["source"],
+                            user_utterance=brow["user_utterance"],
+                            source_bullet_id=brow["source_bullet_id"],
+                        )
+                    )
+                section.items.append(item)
+            doc.sections.append(section)
+    return doc
+
+
+def list_resumes() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT r.*, p.name AS profile_name, "
+            "  (SELECT COUNT(*) FROM resume_section s WHERE s.resume_id = r.id) AS section_count "
+            "FROM resume r JOIN profile p ON p.id = r.profile_id "
+            "ORDER BY r.created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_resume(resume_id: int) -> int:
+    """删除简历，连带删除引用它的投递记录。
+
+    application.resume_id 是 ON DELETE RESTRICT，不先删投递记录会触发外键错误。
+    返回一并删掉的投递记录数。
+    """
+    with get_conn() as conn:
+        apps = conn.execute(
+            "SELECT COUNT(*) c FROM application WHERE resume_id = ?", (resume_id,)
+        ).fetchone()["c"]
+        conn.execute("DELETE FROM application WHERE resume_id = ?", (resume_id,))
+        conn.execute("DELETE FROM resume WHERE id = ?", (resume_id,))
+        return int(apps)
+
+
+def add_suggested_item(resume_id: int, section_type: str, title: str, detail: str) -> bool:
+    """把一条「补写建议」落成简历里的新条目，用户再去编辑填实。"""
+    doc = load_doc(resume_id)
+    if doc is None:
+        return False
+    section = doc.section(section_type)  # type: ignore[arg-type]
+    if section is None:
+        section = Section(type=section_type, items=[])  # type: ignore[arg-type]
+        doc.sections.append(section)
+    section.items.append(
+        Item(org=title.strip() or "（待补写）",
+             bullets=[Bullet(text=(detail or "（在这里补充具体内容）").strip(), source="manual")])
+    )
+    replace_doc(resume_id, doc)
+    return True
+
+
+def update_profile(resume_id: int, doc: ResumeDoc) -> None:
+    """更新共享档案。
+
+    只写入非空值——profile 是全库共享的一行，简历却可能有多份。
+    从零创建一份空白简历时，如果按「空值即清空」写回去，会把主档案的
+    姓名、电话一起抹掉，所有简历跟着遭殃。这里用合并语义：
+    空字符串表示「这份简历没填」，而不是「这个人没有」。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT profile_id FROM resume WHERE id = ?", (resume_id,)
+        ).fetchone()
+        if row is None:
+            return
+        current = conn.execute(
+            "SELECT * FROM profile WHERE id = ?", (row["profile_id"],)
+        ).fetchone()
+        if current is None:
+            return
+
+        def pick(new: str | None, old: str | None) -> str | None:
+            value = (new or "").strip()
+            return value or old
+
+        conn.execute(
+            "UPDATE profile SET name = ?, phone = ?, email = ?, location = ?, "
+            "links_json = ?, updated_at = datetime('now') WHERE id = ?",
+            (
+                pick(doc.name, current["name"]),
+                pick(doc.phone, current["phone"]),
+                pick(doc.email, current["email"]),
+                pick(doc.location, current["location"]),
+                json.dumps(doc.links, ensure_ascii=False) if doc.links else current["links_json"],
+                row["profile_id"],
+            ),
+        )
+
+
+def mark_verified(resume_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE resume SET parse_status = 'verified' WHERE id = ?", (resume_id,)
+        )

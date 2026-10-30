@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}个人数据库 · JobPilot{% endblock %}
+{% block content %}
+
+<h1 class="page-title">个人数据库</h1>
+<p class="lede">从简历自动汇总，投递填表时遇到缺失字段会问你、填了就回写，越用越全。</p>
+
+{% if msg %}<div class="banner banner-ok">{{ msg }}</div>{% endif %}
+
+<section class="card">
+  <h2>已填 {{ rows | selectattr('filled') | list | length }} / {{ rows | length }} 项</h2>
+  <table class="table">
+    <thead><tr><th>字段</th><th>值</th><th>状态</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td style="width:140px">{{ r.label }}</td>
+        <td>
+          {% if r.filled %}
+            <span class="mono">{{ r.value }}</span>
+          {% else %}
+            <form method="post" action="/personal" class="inline-form">
+              <input type="hidden" name="key" value="{{ r.key }}">
+              <input name="value" placeholder="填 {{ r.label }}">
+              <button class="btn btn-sm" type="submit">保存</button>
+            </form>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.filled %}
+            <span class="tag tag-ok">已填</span>
+          {% else %}
+            <span class="tag">缺失</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">身份证号等敏感字段会标记，投递时每次单独确认。</p>
+</section>
+
+{% endblock %}

@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}{{ resume.title }} · 校对{% endblock %}
+{% block content %}
+
+<div class="editor-head">
+  <div>
+    <h1 class="page-title">{{ resume.title }}</h1>
+    <div class="muted small">
+      {% if resume.parse_status == 'verified' %}
+        <span class="tag tag-ok">已校对</span>
+      {% else %}
+        <span class="tag">待校对</span>
+      {% endif %}
+      &nbsp;解析结果只是草稿，改完点「保存」。
+    </div>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-sm" href="/resumes/{{ resume.id }}/dialogue">对话补充</a>
+    <form method="post" action="/resumes/{{ resume.id }}/fill-personal" data-busy="正在从个人库补全…">
+      <button class="btn btn-ghost btn-sm" type="submit">从个人库补全</button>
+    </form>
+    <a class="btn btn-ghost btn-sm" href="/resumes">返回列表</a>
+  </div>
+</div>
+
+<div class="editor-grid">
+  <aside class="pdfpane">
+    <div class="pane-tabs">
+      <button type="button" class="ptab on" data-pane="live">实时预览</button>
+      <button type="button" class="ptab" data-pane="orig">原稿</button>
+      <span class="pane-variants">
+        <button type="button" class="vtab on" data-variant="design">设计版</button>
+        <button type="button" class="vtab" data-variant="ats">ATS</button>
+      </span>
+    </div>
+    <iframe id="livePane" class="live-frame"
+            src="/resumes/{{ resume.id }}/preview?variant=design"></iframe>
+    <div id="origPane" hidden>
+      {% for i in range(page_count) %}
+        <img src="/resumes/{{ resume.id }}/page/{{ i }}.png" alt="第 {{ i + 1 }} 页">
+      {% endfor %}
+    </div>
+  </aside>
+
+  <form id="docForm" method="post" action="/resumes/{{ resume.id }}">
+
+    <section class="card">
+      <h2>导出</h2>
+      <div class="export-row">
+        <a class="btn btn-sm" target="_blank"
+           href="/resumes/{{ resume.id }}/export?variant=design&theme=ink">设计版 · 墨蓝</a>
+        <a class="btn btn-sm" target="_blank"
+           href="/resumes/{{ resume.id }}/export?variant=design&theme=graphite">设计版 · 石墨</a>
+        <a class="btn btn-sm btn-ghost" target="_blank"
+           href="/resumes/{{ resume.id }}/export?variant=ats&theme=ink">ATS 版</a>
+        <span class="export-hint muted small">每次导出都会回读校验，不一致就不给下载</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>基本信息</h2>
+      <div class="row3">
+        <label>姓名<input name="p:name" value="{{ doc.name }}"></label>
+        <label>电话<input name="p:phone" value="{{ doc.phone or '' }}"></label>
+        <label>邮箱<input name="p:email" value="{{ doc.email or '' }}"></label>
+      </div>
+      <div class="row3" style="margin-top:10px">
+        <label>城市<input name="p:location" value="{{ doc.location or '' }}"></label>
+      </div>
+    </section>
+
+    {% for s in doc.sections %}
+    {% set si = loop.index0 %}
+    <section class="card">
+      <div class="sec-head">
+        <select name="s:{{ si }}:type" class="sec-type">
+          {% for t in section_types %}
+            <option value="{{ t }}" {{ 'selected' if s.type == t else '' }}>
+              {{ {'education':'教育经历','experience':'工作经历','project':'项目经历','skill':'专业技能','award':'荣誉奖项','cert':'证书资质','other':'其他'}[t] }}
+            </option>
+          {% endfor %}
+        </select>
+        <span class="muted small">{{ s['items'] | length }} 条</span>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="addItem({{ si }})">+ 条目</button>
+      </div>
+
+      <div class="items" data-si="{{ si }}" data-next="{{ s['items'] | length }}">
+        {% for it in s['items'] %}
+        {% set ii = loop.index0 %}
+        <div class="item" data-ii="{{ ii }}">
+          <div class="row-item">
+            <input class="grow" name="i:{{ si }}:{{ ii }}:org" value="{{ it.org or '' }}"
+                   placeholder="学校 / 公司 / 项目名">
+            <input name="i:{{ si }}:{{ ii }}:role" value="{{ it.role or '' }}" placeholder="专业 / 职位">
+            <input class="date" name="i:{{ si }}:{{ ii }}:start" value="{{ it.start or '' }}" placeholder="开始">
+            <input class="date" name="i:{{ si }}:{{ ii }}:end" value="{{ it.end or '' }}" placeholder="结束">
+            <button class="icon-btn" type="button" title="删除该条目"
+                    onclick="removeRow(this)">×</button>
+          </div>
+
+          {% for k, v in it.meta.items() %}
+          {% set mi = loop.index0 %}
+          <div class="meta-row">
+            <input class="meta-k" name="ml:{{ si }}:{{ ii }}:{{ mi }}" value="{{ k }}">
+            <input class="grow" name="m:{{ si }}:{{ ii }}:{{ mi }}" value="{{ v }}">
+          </div>
+          {% endfor %}
+
+          <div class="bullets" data-si="{{ si }}" data-ii="{{ ii }}" data-next="{{ it.bullets | length }}">
+            {% for b in it.bullets %}
+            {% set bi = loop.index0 %}
+            <div class="bullet-row">
+              <span class="dot"></span>
+              <textarea name="b:{{ si }}:{{ ii }}:{{ bi }}" rows="1"
+                        oninput="this.rows=Math.max(1,Math.ceil(this.value.length/48))">{{ b.text }}</textarea>
+              <input type="hidden" name="bm:{{ si }}:{{ ii }}:{{ bi }}"
+                     value='{{ {"tags": b.tags, "strength": b.strength, "metrics": b.metrics, "source": b.source, "utterance": b.user_utterance, "src_bullet": b.source_bullet_id} | tojson }}'>
+              <button class="icon-btn" type="button" title="删除这条" onclick="removeRow(this)">×</button>
+            </div>
+            {% endfor %}
+          </div>
+
+          <button class="btn btn-sm btn-ghost add-bullet" type="button"
+                  onclick="addBullet(this)">+ 要点</button>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+    <div class="sticky-actions">
+      <button class="btn" type="submit" name="action" value="save">保存</button>
+      <button class="btn btn-ghost" type="submit" name="action" value="verify">标记校对完成</button>
+      <span class="muted small" id="dirtyHint"></span>
+    </div>
+  </form>
+</div>
+
+<template id="itemTpl">
+  <div class="item" data-ii="__II__">
+    <div class="row-item">
+      <input class="grow" name="i:__SI__:__II__:org" placeholder="学校 / 公司 / 项目名">
+      <input name="i:__SI__:__II__:role" placeholder="专业 / 职位">
+      <input class="date" name="i:__SI__:__II__:start" placeholder="开始">
+      <input class="date" name="i:__SI__:__II__:end" placeholder="结束">
+      <button class="icon-btn" type="button" title="删除该条目" onclick="removeRow(this)">×</button>
+    </div>
+    <div class="bullets" data-si="__SI__" data-ii="__II__" data-next="0"></div>
+    <button class="btn btn-sm btn-ghost add-bullet" type="button" onclick="addBullet(this)">+ 要点</button>
+  </div>
+</template>
+
+<template id="bulletTpl">
+  <div class="bullet-row">
+    <span class="dot"></span>
+    <textarea name="b:__SI__:__II__:__BI__" rows="1"
+              oninput="this.rows=Math.max(1,Math.ceil(this.value.length/48))"></textarea>
+    <input type="hidden" name="bm:__SI__:__II__:__BI__" value='{"tags": [], "strength": 3, "metrics": [], "source": "manual"}'>
+    <button class="icon-btn" type="button" title="删除这条" onclick="removeRow(this)">×</button>
+  </div>
+</template>
+
+<script>
+  function stamp(html, si, ii, bi) {
+    return html
+      .replaceAll('__SI__', String(si))
+      .replaceAll('__II__', String(ii))
+      .replaceAll('__BI__', String(bi));
+  }
+
+  function addItem(si) {
+    const box = document.querySelector(`.items[data-si="${si}"]`);
+    const next = Number(box.dataset.next || 0);
+    box.dataset.next = String(next + 1);
+    box.insertAdjacentHTML('beforeend', stamp(document.getElementById('itemTpl').innerHTML, si, next, 0));
+    box.lastElementChild.querySelector('input').focus();
+    markDirty();
+  }
+
+  function addBullet(btn) {
+    const item = btn.closest('.item');
+    const box = item.querySelector('.bullets');
+    const si = box.dataset.si;
+    const ii = box.dataset.ii;
+    const next = Number(box.dataset.next || 0);
+    box.dataset.next = String(next + 1);
+    box.insertAdjacentHTML('beforeend', stamp(document.getElementById('bulletTpl').innerHTML, si, ii, next));
+    box.lastElementChild.querySelector('textarea').focus();
+    markDirty();
+  }
+
+  function removeRow(btn) {
+    const row = btn.closest('.item') || btn.closest('.bullet-row') || btn.closest('.meta-row');
+    if (row) row.remove();
+    markDirty();
+  }
+
+
+  // 预览按容器宽度等比缩放（A4 页面 210mm ≈ 794px）
+  function fitFrame(frame) {
+    try {
+      const doc = frame.contentDocument;
+      if (!doc || !doc.body) return;
+      const page = doc.querySelector('.page');
+      const w = page ? page.getBoundingClientRect().width / (parseFloat(doc.body.style.zoom) || 1)
+                     : doc.body.scrollWidth;
+      if (!w) return;
+      doc.body.style.zoom = Math.min(1, frame.clientWidth / w);
+    } catch (e) { /* 跨域或未加载完就跳过 */ }
+  }
+  function markDirty() {
+    const hint = document.getElementById('dirtyHint');
+    if (hint) hint.textContent = '有未保存的改动';
+  }
+
+  document.getElementById('docForm').addEventListener('input', markDirty);
+
+  // 左侧：实时预览 / 原稿 切换 + 设计版 / ATS 切换
+  const livePane = document.getElementById('livePane');
+  const origPane = document.getElementById('origPane');
+  let currentVariant = 'design';
+  fitFrame(livePane);
+  livePane.addEventListener('load', () => fitFrame(livePane));
+  window.addEventListener('resize', () => fitFrame(livePane));
+
+  document.querySelectorAll('.ptab[data-pane]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.ptab[data-pane]').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      const live = btn.dataset.pane === 'live';
+      livePane.hidden = !live;
+      origPane.hidden = live;
+    };
+  });
+
+  document.querySelectorAll('.vtab').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.vtab').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      currentVariant = btn.dataset.variant;
+      livePane.src = '/resumes/{{ resume.id }}/preview?variant=' + currentVariant;
+    };
+  });
+</script>
+
+{% endblock %}

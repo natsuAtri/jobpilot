@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}JobPilot{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/theme.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/chat">Job<em>Pilot</em></a>
+  <nav>
+    <a href="/chat" class="{{ 'active' if active == 'chat' else '' }}">Agent</a>
+    <div class="nav-menu">
+      <button type="button" class="nav-menu-btn">管理 ▾</button>
+      <div class="nav-menu-list">
+        <a href="/resumes">简历</a>
+        <a href="/jobs">岗位</a>
+        <a href="/personal">个人库</a>
+        <a href="/applications">投递</a>
+      </div>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+  {% if msg %}<div class="banner banner-ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="banner banner-bad">{{ err }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="foot">本地运行 · 数据不出本机</footer>
+
+<div id="busy" class="busy" hidden>
+  <div class="busy-box">
+    <div class="spinner"></div>
+    <div class="busy-text">处理中…</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var busy = document.getElementById('busy');
+  var text = busy.querySelector('.busy-text');
+
+  function show(msg) {
+    text.textContent = msg || '处理中…';
+    busy.hidden = false;
+  }
+  function hide() { busy.hidden = true; }
+
+  // 任何表单提交：立刻给出反馈，按钮禁用防重复提交。
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.dataset.busy === 'skip') return;
+    var btn = form.querySelector('button[type=submit], input[type=submit]');
+    if (btn) {
+      if (btn.tagName === 'BUTTON') {
+        btn.dataset.oldText = btn.textContent;
+        btn.textContent = '处理中…';
+      } else {
+        btn.dataset.oldValue = btn.value;
+        btn.value = '处理中…';
+      }
+      btn.disabled = true;
+    }
+    show(form.dataset.busy || undefined);
+  }, true);
+
+  // 整页刷新/回退时清掉遮罩，避免残留。
+  window.addEventListener('pageshow', hide);
+  window.addEventListener('beforeunload', hide);
+})();
+</script>
+</body>
+</html>

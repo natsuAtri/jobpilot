@@ -1,0 +1,4 @@
+﻿# 语义检索与精排（可选）
+# 安装后首次使用会下载 bge-small-zh-v1.5（~180MB）与 bge-reranker-v2-m3（~2.1GB）
+numpy>=1.26
+sentence-transformers>=3.0

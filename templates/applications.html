@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}投递看板 · JobPilot{% endblock %}
+{% block content %}
+
+<h1 class="page-title">投递看板</h1>
+
+<section class="card">
+  <h2>投递怎么用（四步）</h2>
+  <ol class="roadmap roadmap-steps">
+    <li><strong>① 登录</strong> — 点下面「打开前程无忧登录」，在弹出的浏览器里登录一次；关掉窗口即可，登录态会保存。</li>
+    <li><strong>② 选岗位</strong> — 去 <a href="/jobs/search">搜索岗位</a>，导入感兴趣的岗位；也可以 <a href="/jobs">直接在岗位库</a> 里挑。</li>
+    <li><strong>③ 生成定制简历</strong> — 打开某个岗位详情，点「生成定制简历」，双 agent 会针对该 JD 改写，你在终审页逐条采用/修改。</li>
+    <li><strong>④ 投递并记录</strong> — 岗位详情点「投递」→「打开岗位页」，在登录态浏览器里完成投递（验证码/提交由你操作）→ 回来点「已投递」记录。</li>
+  </ol>
+  <p class="hint">为什么要你自己点最后一步：招聘站有验证码和风控，半自动是目前最稳的做法。</p>
+</section>
+
+<section class="card card-accent">
+  <h2>第一步：登录前程无忧</h2>
+  <form method="post" action="/apply/site-login" class="inline-form">
+    <button class="btn" type="submit">打开前程无忧登录</button>
+    <span class="muted small">登录一次，登录态会保存，之后投递复用。</span>
+  </form>
+</section>
+
+{% if not applications %}
+<div class="card"><p class="muted">还没有投递记录。去<a href="/jobs/search">搜索岗位</a>，选一个投递。</p></div>
+{% else %}
+<section class="card">
+  <h2>{{ applications | length }} 条投递</h2>
+  <table class="table">
+    <thead><tr><th>岗位</th><th>公司</th><th>简历</th><th>状态</th><th>时间</th><th class="right">推进</th></tr></thead>
+    <tbody>
+    {% for a in applications %}
+      <tr>
+        <td><a href="/jobs/{{ a.job_id }}">{{ a.job_title }}</a></td>
+        <td class="muted">{{ a.company or '—' }}</td>
+        <td class="muted">{{ a.resume_title }}</td>
+        <td>
+          {% set ok = a.status in ('offer','interview','replied') %}
+          {% set bad = a.status in ('rejected','withdrawn') %}
+          <span class="tag {{ 'tag-ok' if ok else ('tag-bad' if bad else '') }}">
+            {{ {'draft':'准备中','submitted':'已投递','viewed':'已查看','replied':'有回复','interview':'面试','offer':'Offer','rejected':'已拒绝','withdrawn':'已撤回'}.get(a.status, a.status) }}
+          </span>
+        </td>
+        <td class="muted mono">{{ a.submitted_at }}</td>
+        <td class="right">
+          {% for s in [('viewed','已查看'),('replied','有回复'),('interview','面试'),('offer','Offer'),('rejected','已拒绝'),('withdrawn','已撤回')] %}
+            {% if a.status != s[0] %}
+            <form method="post" action="/applications/{{ a.id }}/status" class="inline">
+              <input type="hidden" name="status" value="{{ s[0] }}">
+              <button class="btn btn-sm btn-ghost" type="submit">{{ s[1] }}</button>
+            </form>
+            {% endif %}
+          {% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}投递 · {{ job.title }}{% endblock %}
+{% block content %}
+
+<div class="editor-head">
+  <div>
+    <h1 class="page-title">投递：{{ job.title }}</h1>
+    <div class="muted small">{{ job.company or '未填公司' }}{% if job.city %} · {{ job.city }}{% endif %}</div>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-ghost btn-sm" href="/jobs/{{ job.id }}">回岗位</a>
+  </div>
+</div>
+
+{% if msg %}<div class="banner banner-ok">{{ msg }}</div>{% endif %}
+
+{% if missing %}
+<div class="banner banner-warn">
+  个人数据库还缺 {{ missing | length }} 项：{{ missing | map(attribute='label') | join('、') }}。
+  投递填表用到时会问你，也可以现在到<a href="/personal">个人库</a>补全。
+</div>
+{% endif %}
+
+<section class="card">
+  <h2>投递步骤</h2>
+  <ol class="roadmap">
+    <li class="done">搜索并选中岗位</li>
+    <li class="done"><a href="/jobs/{{ job.id }}/generate">生成定制简历</a>（双 agent，可选）</li>
+    <li>打开岗位页，在浏览器里完成投递</li>
+    <li>回来点「已投递」记录</li>
+  </ol>
+</section>
+
+<section class="card">
+  <h2>投递</h2>
+  <form method="post" action="/jobs/{{ job.id }}/apply/open" class="inline-form" style="margin-bottom:14px">
+    <button class="btn" type="submit">打开岗位页（登录态浏览器）</button>
+    <span class="muted small">
+      {% if job.url %}
+        会打开 {{ job.url[:40] }}…，首次会要求你扫码/密码登录一次
+      {% else %}
+        这个岗位没有链接，会打开前程无忧首页
+      {% endif %}
+    </span>
+  </form>
+
+  <form method="post" action="/jobs/{{ job.id }}/apply/submit" class="stack">
+    <label>用的哪份简历
+      <select name="resume_id">
+        {% for r in resumes %}
+          <option value="{{ r.id }}" {{ 'selected' if r.id == resume_id else '' }}>{{ r.title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>渠道（可选）<input name="channel" placeholder="前程无忧 / 官网 / 内推"></label>
+    <label>备注（可选）<input name="notes" placeholder="如：已上传定制版简历"></label>
+    <div>
+      <button class="btn" type="submit">已投递，记录</button>
+    </div>
+  </form>
+  <p class="hint">投递在你自己登录的浏览器里完成，这里只做记录。</p>
+</section>
+
+{% endblock %}

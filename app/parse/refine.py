@@ -6,8 +6,10 @@
 """
 from __future__ import annotations
 
+from typing import cast
+
 from ..llm import client
-from ..models import Bullet, Item, ResumeDoc, Section
+from ..models import Bullet, Item, ResumeDoc, Section, SectionType
 from .pdf import PageText, to_prompt_text
 
 VALID_TYPES = {"education", "experience", "project", "skill", "award", "cert", "other"}
@@ -79,14 +81,14 @@ def _to_doc(data: dict, fallback: ResumeDoc) -> ResumeDoc:
     for raw in (data.get("sections") or []):
         if not isinstance(raw, dict):
             continue
-        type_ = raw.get("type")
-        if type_ not in VALID_TYPES:
-            type_ = "other"
+        raw_type = raw.get("type")
+        type_: SectionType = cast(SectionType, raw_type if raw_type in VALID_TYPES else "other")
         section = Section(type=type_, order_index=len(doc.sections))
         for ri, raw_item in enumerate(raw.get("items") or []):
             if not isinstance(raw_item, dict):
                 continue
-            meta = raw_item.get("meta") if isinstance(raw_item.get("meta"), dict) else {}
+            meta_raw = raw_item.get("meta")
+            meta: dict = meta_raw if isinstance(meta_raw, dict) else {}
             item = Item(
                 org=(raw_item.get("org") or "").strip() or None,
                 role=(raw_item.get("role") or "").strip() or None,

@@ -71,6 +71,9 @@ async def complete(
         headers["Authorization"] = f"Bearer {provider.api_key}"
 
     # 网络抖动/限流是常态：失败重试两次，退避 1.5s / 3s
+    import time as _time
+
+    _t0 = _time.time()
     resp = None
     last_error: str = ""
     for attempt in range(3):
@@ -101,11 +104,25 @@ async def complete(
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise LLMError(f"{provider.label} 返回了无法解析的响应") from exc
 
+    usage = data.get("usage", {}) if isinstance(data, dict) else {}
+    try:
+        from .. import trace
+
+        trace.record(
+            "llm", task,
+            args={"model": model, "messages": len(messages), "json": json_mode},
+            result={"chars": len(text or ""), "preview": (text or "")[:120]},
+            latency_ms=int((_time.time() - _t0) * 1000),
+            tokens=(usage or {}).get("total_tokens"),
+        )
+    except Exception:  # noqa: BLE001 - 观测不影响主流程
+        pass
+
     return LLMResult(
         text=text or "",
         model=model,
         provider=provider.label,
-        usage=data.get("usage", {}) if isinstance(data, dict) else {},
+        usage=usage,
     )
 
 
@@ -178,3 +195,98 @@ async def ping(provider_id: int, model: str | None = None) -> str:
         return resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as exc:  # noqa: BLE001 - 上游格式多变
         raise LLMError("响应格式不符合 OpenAI 兼容协议") from exc
+
+
+@dataclass
+class ToolReply:
+    """带工具调用的一轮回复。"""
+    content: str
+    tool_calls: list[dict[str, Any]]
+
+
+async def chat_with_tools(
+    task: str,
+    messages: Sequence[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    timeout: float = 90.0,
+) -> ToolReply:
+    """一次带 tools 的对话补全。模型可能返回 tool_calls 而不是文本。"""
+    if os.environ.get("RA_LLM_STUB") == "1":
+        from .stub import generic_stub
+
+        return ToolReply(content=json.dumps(generic_stub(task, list(messages)), ensure_ascii=False),
+                         tool_calls=[])
+
+    spec = get_task(task)
+    try:
+        provider, model = registry.resolve(task)
+    except LookupError as exc:
+        raise LLMError(f"{exc}，请在 .env 里配置模型。") from exc
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": list(messages),
+        "temperature": spec.temperature if temperature is None else temperature,
+        "stream": False,
+        "tools": tools,
+        "tool_choice": "auto",
+    }
+    if max_tokens:
+        payload["max_tokens"] = max_tokens
+
+    headers = {"Content-Type": "application/json"}
+    if provider.api_key:
+        headers["Authorization"] = f"Bearer {provider.api_key}"
+
+    import time as _time
+
+    _t0 = _time.time()
+    last_error = ""
+    resp = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(_endpoint(provider.base_url), json=payload, headers=headers)
+        except httpx.RequestError as exc:
+            last_error = f"无法连接 {provider.label}：{exc}"
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise LLMError(last_error) from exc
+        if resp.status_code < 400:
+            break
+        last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+            await asyncio.sleep(1.5 * (attempt + 1))
+            continue
+        raise LLMError(last_error)
+
+    if resp is None or resp.status_code >= 400:
+        raise LLMError(last_error or f"{provider.label} 请求失败")
+
+    try:
+        data = resp.json()
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise LLMError(f"{provider.label} 返回了无法解析的响应") from exc
+
+    calls = message.get("tool_calls") or []
+    usage = data.get("usage", {}) if isinstance(data, dict) else {}
+    try:
+        from .. import trace
+
+        trace.record(
+            "llm", f"{task}:tools",
+            args={"model": model, "tools": len(tools)},
+            result={"tool_calls": [c.get("function", {}).get("name") for c in calls],
+                    "chars": len(message.get("content") or "")},
+            latency_ms=int((_time.time() - _t0) * 1000),
+            tokens=(usage or {}).get("total_tokens"),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return ToolReply(content=message.get("content") or "", tool_calls=calls)

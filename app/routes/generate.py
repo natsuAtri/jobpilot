@@ -50,6 +50,15 @@ def _worker(run_id: str, job_id: int, resume_id: int, opinion: str) -> None:
         except Exception:  # noqa: BLE001
             evidence, gaps = [], []
 
+        db_run_id = gen_repo.get_or_create_run(resume_id, job_id)
+        # 断点续跑：上次中断时已经完成的步骤直接复用，不重复烧 token
+        steps = gen_repo.load_steps(db_run_id)
+        if steps:
+            gen_progress.add_step(run_id, "resume", f"发现上次的 {len(steps)} 个检查点，继续生成")
+
+        def on_step(step: str, payload) -> None:
+            gen_repo.save_step(db_run_id, step, payload)
+
         result = asyncio.run(
             engine.generate(
                 doc, jd,
@@ -57,11 +66,13 @@ def _worker(run_id: str, job_id: int, resume_id: int, opinion: str) -> None:
                 trace=gen_progress.make_trace(run_id),
                 evidence=evidence,
                 gaps=gaps,
+                cache=steps,
+                on_step=on_step,
             )
         )
-        db_run_id = gen_repo.get_or_create_run(resume_id, job_id)
         gen_repo.replace_items(db_run_id, result.proposals)
         gen_repo.save_suggestions(db_run_id, result.suggestions)
+        gen_repo.clear_steps(db_run_id)
         gen_progress.finish(run_id, f"已保存 {len(result.proposals)} 条候选，去终审页处理")
     except Exception as exc:  # noqa: BLE001 - 任何失败都要反映到页面
         gen_progress.fail(run_id, f"{type(exc).__name__}: {exc}")
@@ -73,6 +84,30 @@ def _start(job_id: int, resume_id: int, opinion: str = "") -> str:
         target=_worker, args=(run_id, job_id, resume_id, opinion), daemon=True
     ).start()
     return run_id
+
+
+def _wants_json(request: Request) -> bool:
+    """页面里的按钮用 fetch 提交，返回 JSON 就地更新，避免整页刷新。"""
+    return request.headers.get("x-requested-with") == "fetch"
+
+
+def _state_payload(job_id: int, resume_id: int) -> dict:
+    run = gen_repo.find_run(resume_id, job_id)
+    items = gen_repo.list_items(int(run["id"])) if run else []
+    accepted = sum(1 for i in items if i.get("accepted") == 1 or i.get("manual"))
+    return {
+        "ok": True,
+        "accepted": accepted,
+        "items": [
+            {
+                "id": i["id"],
+                "accepted": i["accepted"],
+                "manual": i["manual"],
+                "blocked": i["blocked"],
+            }
+            for i in items
+        ],
+    }
 
 
 @router.get("/{job_id}/generate")
@@ -106,12 +141,15 @@ async def review_page(request: Request, job_id: int, resume_id: int | None = Non
     items.sort(key=lambda i: priority_order.get(i.get("priority") or "normal", 1))
     accepted = sum(1 for i in items if i.get("accepted") == 1 or i.get("manual"))
     suggestions = gen_repo.get_suggestions(int(db_run["id"])) if db_run else []
+    # 上次生成中断留下的检查点：提示用户重新生成会从断点继续
+    pending_steps = len(gen_repo.load_steps(int(db_run["id"]))) if db_run else 0
     return templates.TemplateResponse(
         request, "generate_review.html",
         {
             "active": "job", "job": job, "resumes": resumes, "resume_id": resume_id,
             "run": db_run, "items": items, "accepted": accepted,
             "suggestions": suggestions, "err": err,
+            "pending_steps": pending_steps,
         },
     )
 
@@ -141,28 +179,37 @@ async def opinion(job_id: int, resume_id: int = Form(...), opinion: str = Form(.
 
 
 @router.post("/{job_id}/generate/accept-all")
-async def accept_all(job_id: int, resume_id: int = Form(...)):
+async def accept_all(request: Request, job_id: int, resume_id: int = Form(...)):
     run = gen_repo.find_run(resume_id, job_id)
     if run is not None:
         gen_repo.accept_all_passed(int(run["id"]))
+    if _wants_json(request):
+        return JSONResponse(_state_payload(job_id, resume_id))
     return _back(job_id, resume_id)
 
 
 @router.post("/{job_id}/generate/item/{item_id}/accept")
-async def accept_item(job_id: int, item_id: int, resume_id: int = Form(...)):
+async def accept_item(request: Request, job_id: int, item_id: int, resume_id: int = Form(...)):
     gen_repo.set_accepted(item_id, 1)
+    if _wants_json(request):
+        return JSONResponse(_state_payload(job_id, resume_id))
     return _back(job_id, resume_id)
 
 
 @router.post("/{job_id}/generate/item/{item_id}/reject")
-async def reject_item(job_id: int, item_id: int, resume_id: int = Form(...)):
+async def reject_item(request: Request, job_id: int, item_id: int, resume_id: int = Form(...)):
     gen_repo.set_accepted(item_id, 0)
+    if _wants_json(request):
+        return JSONResponse(_state_payload(job_id, resume_id))
     return _back(job_id, resume_id)
 
 
 @router.post("/{job_id}/generate/item/{item_id}/edit")
-async def edit_item(job_id: int, item_id: int, resume_id: int = Form(...), text: str = Form(...)):
+async def edit_item(request: Request, job_id: int, item_id: int, resume_id: int = Form(...),
+                      text: str = Form(...)):
     gen_repo.set_manual(item_id, text)
+    if _wants_json(request):
+        return JSONResponse(_state_payload(job_id, resume_id))
     return _back(job_id, resume_id)
 
 

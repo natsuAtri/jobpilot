@@ -10,10 +10,13 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from ..config import EXPORT_DIR, TMP_DIR, UPLOADS_DIR
+from ..forms import SECTION_TYPES, apply_form
 from ..models import ResumeDoc
 from ..parse import extract_pages, extract_rules, render_png
+from ..parse.pdf import extract_photo
 from ..render import expected_fragments, render_html, verify_pdf
 from ..render.browser import BrowserError, print_to_pdf, screenshot_png
+from ..repo import personal
 from ..repo import resumes as repo
 from ..templating import templates
 
@@ -21,8 +24,6 @@ router = APIRouter(prefix="/resumes")
 
 FIELD_RE = re.compile(r"^([simbl]):(\d+)(?::(\d+))?(?::(\d+))?$")
 
-
-from ..forms import SECTION_TYPES, apply_form
 
 
 # --------------------------------------------------------------------- 路由
@@ -54,7 +55,7 @@ async def import_pdf(file: UploadFile = File(...)):
     pages = extract_pages(stored)
     if not pages or not any(p.lines for p in pages):
         return RedirectResponse(
-            f"/resumes?err=这个 PDF 没有文本层，可能是扫描件（M1 暂不支持）", status_code=303
+            "/resumes?err=这个 PDF 没有文本层，可能是扫描件（M1 暂不支持）", status_code=303
         )
 
     doc = extract_rules(pages)
@@ -67,10 +68,12 @@ async def import_pdf(file: UploadFile = File(...)):
     stem = Path(file.filename).stem
     title = f"{doc.name} 的简历" if doc.name else stem
     resume_id = repo.create_resume(doc, source_file=stored.name, title=title)
-    # 同步填充个人数据库
-    from ..repo import personal
-
+    # 同步填充个人数据库，并尝试从 PDF 里提取证件照
     personal.build_from_resume(doc)
+    if personal.photo_path() is None:
+        found = extract_photo(stored)
+        if found:
+            personal.set_photo(found[0], found[1], source="resume")
     # 先进入解析复核，而不是直接去编辑——让用户先回答 Agent 的疑问
     msg = "简历已导入。先回答下面几个疑点，也可以直接去 Agent 让它帮你找岗位"
     return RedirectResponse(f"/resumes/{resume_id}/dialogue?msg={msg}", status_code=303)
@@ -119,7 +122,8 @@ async def save(request: Request, resume_id: int):
 
     form = await request.form()
     doc = apply_form(doc, form)
-    action = (form.get("action") or "save").strip()
+    action_raw = form.get("action")
+    action = (action_raw if isinstance(action_raw, str) else "save").strip()
 
     repo.replace_doc(resume_id, doc)
     repo.update_profile(resume_id, doc)
@@ -140,7 +144,9 @@ async def preview_resume(resume_id: int, variant: str = "design", theme: str = "
     doc = repo.load_doc(resume_id)
     if doc is None:
         raise HTTPException(404, "简历不存在")
-    return HTMLResponse(render_html(doc, theme=theme, variant="ats" if variant == "ats" else "design"))
+    return HTMLResponse(render_html(doc, theme=theme,
+                                    variant="ats" if variant == "ats" else "design",
+                                    photo=personal.photo_data_uri()))
 
 
 @router.post("/{resume_id}/fill-personal")
@@ -183,7 +189,7 @@ async def preview_png(resume_id: int, variant: str = "design", theme: str = "ink
     doc, _ = _load_or_404(resume_id)
     variant = variant if variant in VALID_VARIANTS else "design"
     theme = theme if theme in VALID_THEMES else "ink"
-    html = render_html(doc, theme=theme, variant=variant)
+    html = render_html(doc, theme=theme, variant=variant, photo=personal.photo_data_uri())
     out = TMP_DIR / f"preview-{resume_id}-{variant}-{theme}.png"
     try:
         screenshot_png(html, out)
@@ -200,7 +206,7 @@ async def export_pdf(
     variant = variant if variant in VALID_VARIANTS else "design"
     theme = theme if theme in VALID_THEMES else "ink"
 
-    html = render_html(doc, theme=theme, variant=variant)
+    html = render_html(doc, theme=theme, variant=variant, photo=personal.photo_data_uri())
     out = EXPORT_DIR / f"resume-{resume_id}-{variant}-{theme}.pdf"
     try:
         print_to_pdf(html, out)

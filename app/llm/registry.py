@@ -78,7 +78,7 @@ def create_provider(
                 json.dumps(capabilities or {}, ensure_ascii=False),
             ),
         )
-        provider_id = int(cur.lastrowid)
+        provider_id = int(cur.lastrowid or 0)
         ref = f"provider_{provider_id}"
         conn.execute("UPDATE llm_provider SET api_key_ref = ? WHERE id = ?", (ref, provider_id))
     if api_key:

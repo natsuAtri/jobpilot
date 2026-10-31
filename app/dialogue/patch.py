@@ -6,11 +6,11 @@ patch 先落库等用户确认，确认后才写入 ResumeDoc——
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
-from ..models import Bullet, Item, Section, ResumeDoc
+from ..models import Bullet, Item, ResumeDoc, Section, SectionType
 
 PROFILE_FIELDS = {"name", "phone", "email", "location", "intents"}
 
@@ -73,6 +73,15 @@ def parse_patches(raw: list | None) -> list[Patch]:
     return patches
 
 
+
+
+VALID_SECTION_TYPES = {"education", "experience", "project", "skill", "award", "cert", "other"}
+
+
+def _as_section_type(value: str | None) -> SectionType:
+    return cast(SectionType, value if value in VALID_SECTION_TYPES else "other")
+
+
 def _find_section(doc: ResumeDoc, name: str | None) -> Section | None:
     return next((s for s in doc.sections if s.type == name), None)
 
@@ -88,7 +97,7 @@ def _ensure_item(doc: ResumeDoc, name: str | None) -> Item:
     if section is None:
         if not name:
             raise PatchError("没有指定章节")
-        section = Section(type=name, order_index=len(doc.sections))
+        section = Section(type=_as_section_type(name), order_index=len(doc.sections))
         doc.sections.append(section)
     if not section.items:
         section.items.append(Item(order_index=0))
@@ -116,7 +125,7 @@ def apply_patches(doc: ResumeDoc, patches: list[Patch]) -> tuple[list[str], list
             elif patch.op == "add_item":
                 section = _find_section(doc, patch.section)
                 if section is None:
-                    section = Section(type=patch.section, order_index=len(doc.sections))
+                    section = Section(type=_as_section_type(patch.section), order_index=len(doc.sections))
                     doc.sections.append(section)
                 section.items.append(
                     Item(

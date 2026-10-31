@@ -732,3 +732,84 @@ details.card[open] > summary { margin-bottom: 6px; }
   border: none; border-radius: 6px; background: #fff;
 }
 .live-frame[hidden] { display: none; }
+/* ---------------------------------------------------------------- Agent 页双栏：对话 + 候选 */
+.wrap:has(.agent-layout) { max-width: 1480px; padding-left: 18px; padding-right: 18px; }
+.agent-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 32%, 460px);
+  gap: 18px;
+  align-items: start;
+}
+.agent-layout-single { grid-template-columns: 1fr; }
+.agent-layout .chat-shell { max-width: none; margin: 0; }
+
+.agent-side {
+  position: sticky; top: 72px;
+  max-height: calc(100vh - 96px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 14px 16px 12px;
+  box-shadow: var(--shadow-1);
+}
+.side-head {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+}
+.agent-side .cand-panel {
+  margin-top: 0; padding: 0; border: none; border-radius: 0;
+  box-shadow: none; background: transparent;
+}
+.agent-side .cand-panel-head { padding-bottom: 6px; }
+@media (max-width: 820px) {
+  .agent-layout { grid-template-columns: 1fr; }
+  .agent-side { position: static; max-height: 46vh; }
+}
+/* 侧栏窄，候选行改成两行式：标题+分数 / 公司地点+操作 */
+.agent-side .cand-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "idx name score"
+    "idx meta acts"
+    "jd  jd   jd";
+  row-gap: 6px; column-gap: 10px;
+  padding: 10px 6px;
+}
+.agent-side .cand-row .cand-idx { grid-area: idx; align-self: start; margin-top: 1px; }
+.agent-side .cand-row .cand-name { grid-area: name; font-size: 13px; }
+.agent-side .cand-row .cand-meta { grid-area: meta; font-size: 11.5px; }
+.agent-side .cand-row .cand-score { grid-area: score; font-size: 13px; }
+.agent-side .cand-row .cand-acts { grid-area: acts; justify-self: end; opacity: .75; }
+.agent-side .cand-row .cand-jd { grid-area: jd; }
+
+/* 空态示例候选 */
+.cand-row.is-sample { opacity: .5; }
+.cand-row.is-sample .cand-btn.is-ghost {
+  display: inline-block; padding: 3px 9px; border-radius: 6px;
+  border: 1px solid var(--line); color: var(--muted); font-size: 12px;
+}
+.cand-empty-note {
+  font-size: 11.5px; color: var(--faint); text-align: center;
+  padding: 8px 0 2px; border-top: 1px dashed var(--line); margin-top: 4px;
+}
+
+
+/* 窄侧栏：标题最多两行，操作按钮更紧凑 */
+.agent-side .cand-row .cand-name {
+  white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; line-height: 1.4;
+}
+.agent-side .cand-row .cand-acts .cand-btn {
+  padding: 2px 7px; font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------- 个人库：证件照 */
+.photo-row { display: flex; gap: 20px; align-items: flex-start; }
+.photo-slot {
+  width: 104px; height: 136px; flex: none; overflow: hidden;
+  border: 1px dashed var(--line); border-radius: 8px; background: #faf6ef;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--faint); font-size: 12px;
+}
+.photo-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-actions { flex: 1; min-width: 0; }
+@media (max-width: 640px) { .photo-row { flex-direction: column; } }

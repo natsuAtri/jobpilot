@@ -222,6 +222,51 @@ def render_png(path: str | Path, index: int, scale: float = 2.0) -> bytes:
         pdf.close()
 
 
+def extract_photo(path: str | Path) -> tuple[bytes, str] | None:
+    """从 PDF 首页提取照片，返回 (数据, 扩展名)。
+
+    简历里的证件照通常是页面里唯一的一张位图。取「像素面积最大」的那张，
+    比按坐标猜位置更稳；DCTDecode 的直接拿原始 JPEG，其它格式转 JPEG。
+    """
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        if len(pdf) == 0:
+            return None
+        page = pdf[0]
+        images = [obj for obj in page.get_objects() if isinstance(obj, pdfium.PdfImage)]
+        if not images:
+            return None
+
+        def area(obj) -> int:
+            try:
+                width, height = obj.get_px_size()
+                return int(width) * int(height)
+            except Exception:  # noqa: BLE001
+                return 0
+
+        best = max(images, key=area)
+        if area(best) < 4000:  # 太小，多半是图标或线条
+            return None
+
+        try:
+            filters = best.get_filters() or []
+        except Exception:  # noqa: BLE001
+            filters = []
+        if "DCTDecode" in filters:
+            data = bytes(best.get_data())
+            if data[:2] == b"\xff\xd8":  # JPEG 魔数
+                return data, "jpg"
+
+        bitmap = best.get_bitmap()
+        buffer = io.BytesIO()
+        bitmap.to_pil().convert("RGB").save(buffer, format="JPEG", quality=92)
+        return buffer.getvalue(), "jpg"
+    except Exception:  # noqa: BLE001 - 提照片失败不影响解析
+        return None
+    finally:
+        pdf.close()
+
+
 def to_prompt_text(pages: list[PageText]) -> str:
     """把视觉行压成 LLM 可读的紧凑表示。
 
@@ -240,7 +285,8 @@ def to_prompt_text(pages: list[PageText]) -> str:
 if __name__ == "__main__":
     import sys
 
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     for page in extract(sys.argv[1]):
         print(f"===== page {page.index + 1} {page.width:.0f}x{page.height:.0f} =====")
         for line in page.lines:

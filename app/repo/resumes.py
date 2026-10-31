@@ -9,7 +9,7 @@ import json
 from typing import Any
 
 from ..db import get_conn, now_local
-from ..models import Bullet, Item, ResumeDoc, Section, SectionType
+from ..models import Bullet, Item, ResumeDoc, Section
 
 
 def ensure_profile(name: str = "") -> int:
@@ -18,7 +18,7 @@ def ensure_profile(name: str = "") -> int:
         if row:
             return int(row["id"])
         cur = conn.execute("INSERT INTO profile(name) VALUES (?)", (name,))
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def create_resume(
@@ -53,7 +53,7 @@ def create_resume(
                 "base_resume_id, created_at) VALUES (?, ?, ?, ?, 'parsed', ?, ?)",
                 (pid, kind, base_title, source_file, base_resume_id, now_local()),
             )
-            resume_id = int(cur.lastrowid)
+            resume_id = int(cur.lastrowid or 0)
     # 解析出的联系方式必须落库，否则校对界面里就是空的
     update_profile(resume_id, doc)
     replace_doc(resume_id, doc)
@@ -79,7 +79,7 @@ def replace_doc(resume_id: int, doc: ResumeDoc) -> None:
                 "VALUES (?, ?, ?, ?)",
                 (resume_id, section.type, section.title, s_index),
             )
-            section_id = int(cur.lastrowid)
+            section_id = int(cur.lastrowid or 0)
             for i_index, item in enumerate(section.items):
                 cur = conn.execute(
                     "INSERT INTO resume_item(section_id, org, role, location, start_date, "
@@ -95,7 +95,7 @@ def replace_doc(resume_id: int, doc: ResumeDoc) -> None:
                         i_index,
                     ),
                 )
-                item_id = int(cur.lastrowid)
+                item_id = int(cur.lastrowid or 0)
                 for b_index, bullet in enumerate(item.bullets):
                     conn.execute(
                         "INSERT INTO resume_bullet(item_id, text, order_index, tags_json, "

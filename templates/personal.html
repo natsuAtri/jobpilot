@@ -8,9 +8,42 @@
 {% if msg %}<div class="banner banner-ok">{{ msg }}</div>{% endif %}
 
 <section class="card">
+  <h2>证件照</h2>
+  <div class="photo-row">
+    <div class="photo-slot">
+      {% if photo_uri %}
+        <img src="{{ photo_uri }}" alt="证件照">
+      {% else %}
+        <span>暂无照片</span>
+      {% endif %}
+    </div>
+    <div class="photo-actions">
+      <p class="hint" style="margin-top:0">
+        导出的「设计版」简历会自动带上这张照片；ATS 版不显示照片（避免解析干扰）。<br>
+        导入简历 PDF 时，如果 PDF 里有证件照，会自动提取到这里。
+      </p>
+      <form method="post" action="/personal/photo" enctype="multipart/form-data"
+            class="inline-form" data-busy="正在上传…">
+        <label class="file-picker">
+          <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required
+                 onchange="document.getElementById('photoName').textContent = this.files[0]?.name || '未选择'">
+          <span class="file-picker-btn">选择照片</span>
+          <span class="file-picker-name" id="photoName">未选择</span>
+        </label>
+        <button class="btn btn-sm" type="submit">上传</button>
+      </form>
+      {% if photo_uri %}
+      <form method="post" action="/personal/photo/delete" style="margin-top:8px">
+        <button class="btn btn-sm btn-ghost" type="submit">删除照片</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card">
   <h2>已填 {{ rows | selectattr('filled') | list | length }} / {{ rows | length }} 项</h2>
   <table class="table">
-    <thead><tr><th>字段</th><th>值</th><th>状态</th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>

@@ -40,7 +40,7 @@ def create_job(
              city.strip() or None, description, job_type, salary_min, salary_max,
              salary_months, external_id, dedupe_key),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def list_jobs() -> list[dict[str, Any]]:

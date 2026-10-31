@@ -6,7 +6,8 @@ from ..templating import templates
 from .context import build_context
 
 
-def render_html(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design") -> str:
-    context = build_context(doc, theme=theme, variant=variant)
+def render_html(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design",
+                photo: str | None = None) -> str:
+    context = build_context(doc, theme=theme, variant=variant, photo=photo)
     template = templates.get_template("resume/document.html")
     return template.render(**context)

@@ -6,11 +6,11 @@ No xref reliance: objects are found by scanning, including those packed inside
 /ObjStm streams. Supports FlateDecode, Type0/Identity-H CID fonts and
 ToUnicode CMaps (bfchar + bfrange), which is what Chinese resumes need.
 """
+import json
 import re
 import sys
-import zlib
-import json
 import unicodedata
+import zlib
 
 OBJ_RE = re.compile(rb'(?<![0-9])(\d+)\s+(\d+)\s+obj\b')
 

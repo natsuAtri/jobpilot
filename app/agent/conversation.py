@@ -14,7 +14,7 @@ def get_active() -> int:
         if row:
             return int(row["id"])
         cur = conn.execute("INSERT INTO conversation(state_json) VALUES ('{}')")
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def get_state(conversation_id: int) -> dict[str, Any]:
@@ -47,7 +47,7 @@ def add_message(conversation_id: int, role: str, content: str,
             (conversation_id, role, content,
              json.dumps(payload or {}, ensure_ascii=False), now_local()),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def list_messages(conversation_id: int) -> list[dict[str, Any]]:

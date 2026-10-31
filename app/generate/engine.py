@@ -16,7 +16,7 @@ from ..llm import client
 from ..models import ResumeDoc
 from . import prompt
 from . import strategy as strategy_mod
-from .facts import Fact, extract_facts, find_fact
+from .facts import Fact, extract_facts
 from .guard import CheckResult, check
 
 # 去掉标点、空白、大小写后的「实质内容」，用于判断改写是否真有变化。
@@ -137,10 +137,23 @@ async def generate(
     trace=None,
     evidence: list[dict] | None = None,
     gaps: list[dict] | None = None,
+    cache: dict | None = None,
+    on_step=None,
 ) -> GenerationResult:
+    cache = cache if cache is not None else {}
+
     def t(stage: str, message: str, detail: list | None = None) -> None:
         if trace is not None:
             trace(stage, message, detail)
+
+    def save(step: str, payload) -> None:
+        """落一份检查点，失败重跑时可以直接复用。"""
+        cache[step] = payload
+        if on_step is not None:
+            try:
+                on_step(step, payload)
+            except Exception:  # noqa: BLE001 - 存检查点失败不影响生成
+                pass
 
     facts = extract_facts(doc)
     t("facts", f"抽取事实白名单 {len(facts)} 条", [f.text for f in facts[:8]])
@@ -154,8 +167,13 @@ async def generate(
     from ..rag.chunk import requirement_text
 
     req_text = requirement_text(jd_text)
-    t("strategy", "策略层正在分析 JD 与简历，决定改哪些…")
-    plan = await strategy_mod.plan(req_text, facts, gaps=gaps, evidence=evidence)
+    plan = cache.get("strategy")
+    if plan is None:
+        t("strategy", "策略层正在分析 JD 与简历，决定改哪些…")
+        plan = await strategy_mod.plan(req_text, facts, gaps=gaps, evidence=evidence)
+        save("strategy", plan)
+    else:
+        t("strategy", "沿用上次已完成的策略（检查点）")
     focus_ids = [item["source_id"] for item in plan.get("focus") or []]
     if focus_ids:
         t(
@@ -175,12 +193,17 @@ async def generate(
         draft_facts = facts
 
     # ---- 起草
-    t("draft", f"起草 agent 正在改写 {len(draft_facts)} 条…（调用强模型）")
-    draft_data = await client.complete_json(
-        task_draft,
-        prompt.draft_messages(draft_facts, jd_text, opinion=opinion,
-                              strategy=plan, evidence=evidence),
-    )
+    draft_data = cache.get("draft")
+    if draft_data is None:
+        t("draft", f"起草 agent 正在改写 {len(draft_facts)} 条…（调用强模型）")
+        draft_data = await client.complete_json(
+            task_draft,
+            prompt.draft_messages(draft_facts, jd_text, opinion=opinion,
+                                  strategy=plan, evidence=evidence),
+        )
+        save("draft", draft_data)
+    else:
+        t("draft", "沿用上次已完成的起草结果（检查点）")
     _apply_rewrites(proposals, draft_data.get("rewrites") or [])
     t("draft", f"起草完成：{sum(1 for p in proposals if p.changed)} 条有实质改动",
       [{"original": p.original, "rewritten": p.rewritten, "blocked": p.blocked}
@@ -190,11 +213,16 @@ async def generate(
     missed: list[dict] = []
     changed = [p for p in proposals if p.changed]
     if changed:
-        t("critique", "评审 agent 正在判断每条改动的收益…")
-        review_data = await client.complete_json(
-            task_critique,
-            prompt.critique_messages(facts, jd_text, _rewrite_payload(changed), strategy=plan),
-        )
+        review_data = cache.get("critique")
+        if review_data is None:
+            t("critique", "评审 agent 正在判断每条改动的收益…")
+            review_data = await client.complete_json(
+                task_critique,
+                prompt.critique_messages(facts, jd_text, _rewrite_payload(changed), strategy=plan),
+            )
+            save("critique", review_data)
+        else:
+            t("critique", "沿用上次已完成的评审结果（检查点）")
         reviews = review_data.get("reviews") or []
         missed = review_data.get("missed") or []
         _apply_critiques(proposals, reviews)
@@ -226,10 +254,15 @@ async def generate(
     try:
         from . import suggest as suggest_mod
 
-        t("suggest", "正在生成「该补什么」的建议…")
-        suggestions = await suggest_mod.suggest(
-            doc, req_text, missing=plan.get("missing") or [], missed=missed
-        )
+        cached = cache.get("suggest")
+        if cached is None:
+            t("suggest", "正在生成「该补什么」的建议…")
+            suggestions = await suggest_mod.suggest(
+                doc, req_text, missing=plan.get("missing") or [], missed=missed
+            )
+            save("suggest", suggestions)
+        else:
+            t("suggest", "沿用上次已完成的补写建议（检查点）")
         if suggestions:
             t("suggest", f"补写建议 {len(suggestions)} 条",
               [c["title"] for c in suggestions])
@@ -255,9 +288,9 @@ def locate_bullet(doc: ResumeDoc, source_id: str):
     parts = source_id.split(":")
     if len(parts) != 3:
         return None
-    section_type, item_index, bullet_index = parts
+    section_type, raw_item, raw_bullet = parts
     try:
-        item_index, bullet_index = int(item_index), int(bullet_index)
+        item_index, bullet_index = int(raw_item), int(raw_bullet)
     except ValueError:
         return None
     section = doc.section(section_type)  # type: ignore[arg-type]

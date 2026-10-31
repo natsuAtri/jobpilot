@@ -14,7 +14,7 @@ def create_session(profile_id: int, resume_id: int, mode: str) -> int:
             "VALUES (?, ?, ?, '{}')",
             (profile_id, resume_id, mode),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def get_session(session_id: int) -> dict[str, Any] | None:
@@ -48,7 +48,7 @@ def add_turn(
             "VALUES (?, ?, ?, ?, ?)",
             (session_id, role, content, patch_json, accepted),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def list_turns(session_id: int) -> list[dict[str, Any]]:

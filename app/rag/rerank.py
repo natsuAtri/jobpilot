@@ -57,7 +57,8 @@ def get_model():
 
 
 def active_name() -> str:
-    return _MODEL_PATH.name if _MODEL_PATH else (active_path().name if active_path() else "")
+    path = _MODEL_PATH or active_path()
+    return path.name if path else ""
 
 
 def rerank(query: str, texts: list[str]) -> list[float]:

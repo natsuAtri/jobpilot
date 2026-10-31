@@ -1,5 +1,7 @@
 # JobPilot
 
+[![CI](https://github.com/natsuAtri/jobpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/natsuAtri/jobpilot/actions/workflows/ci.yml)
+
 > 求职副驾 —— 本地运行的求职 Agent。
 >
 > 简历 PDF → 结构化校对 → 岗位搜索 → 匹配打分 → 双 agent 定制 → 半自动投递 → 复盘。
@@ -126,8 +128,8 @@ app/
   agent/      对话意图、会话状态、适配度判断
   dialogue/   解析答疑与 patch 应用
   routes/     FastAPI 路由
-migrations/   12 个 SQL 迁移
-tools/        9 个 smoke 脚本（138 条断言）
+migrations/   14 个 SQL 迁移
+tools/        11 个脚本（165 条断言）+ 意图/对话评测集
 docs/         技术报告 / 设计文档 / 改动日志 / 已知问题
 ```
 
@@ -148,8 +150,40 @@ python tools/smoke_scratch.py                # 从零创建 10 项
 RA_LLM_STUB=1 python tools/smoke_generate.py # 双 agent 13 项
 ```
 
-合计 **138 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
+合计 **165 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
 不需要 API Key 就能验通链路。
+
+另有两个评测集：
+
+```bash
+python tools/eval_intent.py -v   # 30 条意图，离线，门禁式退出码
+python tools/eval_agent.py -v    # 15 条对话，需要真实模型，验证工具选择
+```
+
+## 开发
+
+```bash
+pip install -r requirements-dev.txt   # ruff + mypy
+ruff check .                          # 静态检查
+mypy --config-file pyproject.toml     # 类型检查（app/ 零错误）
+```
+
+CI 在每次 push 时自动跑 ruff + mypy + 不依赖模型/浏览器的测试；
+`smoke_m2`（需要本机 Chrome）与 `smoke_match` / `smoke_rag`（需要 2.3GB 本地模型）只在本地跑。
+
+改对话行为后请同步更新 `tools/eval_agent.py` 的用例，避免「改 A 坏 B」。
+
+### Agent 路由
+
+```
+用户输入
+  ├─ 精确指令（投/定制第 N 个、再找几个、排除 X、现在有什么…）→ 直接执行，0 次模型调用
+  └─ 其余全部交给 agent：模型看「简历摘要 + 候选清单 + 最近 3 轮对话」，
+     自己决定调哪些工具、调几次（最多 4 步）
+```
+
+定制简历与投递是**有副作用**的动作：agent 只能提议，用户回复「定制 N」「投 N」确认后才执行。
+模型不可用时自动回退到规则解析。
 
 ## 平台限制（重要）
 

@@ -23,6 +23,30 @@ def _index(text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+
+_INDEX_ALL = re.compile(r"第\s*([一二三四五六七八九十\d]{1,3})\s*个")
+_ELLIPSIS = re.compile(r"^\s*(?:那|那么)?\s*第?\s*([一二三四五六七八九十\d]{1,3})\s*个?\s*(?:呢|怎么样|如何)?\s*[？?]?\s*$")
+
+
+def indices(text: str) -> list[int]:
+    """一句话里提到的所有序号（「第二个和第三个」→ [2, 3]）。"""
+    out: list[int] = []
+    for raw in _INDEX_ALL.findall(text or ""):
+        idx = int(raw) if raw.isdigit() else CN_NUM.get(raw)
+        if idx and idx not in out:
+            out.append(idx)
+    return out
+
+
+def ellipsis_index(text: str) -> int | None:
+    """「第三个呢」这种省略句，返回它指向的序号。"""
+    match = _ELLIPSIS.match(text or "")
+    if not match:
+        return None
+    raw = match.group(1)
+    return int(raw) if raw.isdigit() else CN_NUM.get(raw)
+
+
 @dataclass
 class Intent:
     name: str
@@ -54,12 +78,24 @@ def classify(text: str) -> Intent:
     ):
         return Intent("chat", {"text": t})
 
-    if re.search(r"(定制|改简历|生成简历|适配一下)", t):
-        return Intent("tailor", {"index": _index(t), "text": t})
+    # 针对某个岗位优化/改写简历。
+    # 注意：「我打算投第三个，帮我把简历优化一下」是改写，不是投递——
+    # 「优化/润色/改改」这类动词出现时，优先按 tailor 处理。
+    if re.search(r"(定制|改简历|生成简历|适配一下|优化|润色|打磨)", t) or (
+        re.search(r"简历", t) and re.search(r"(修改|改一改|改改|改下|改一下|调整)", t)
+    ):
+        index = _index(t)
+        if index is None:
+            bare = re.search(r"(?:定制|优化|润色|打磨|改)\s*(\d{1,2})\s*(?:个|号)?", t)
+            if bare:
+                index = int(bare.group(1))
+        return Intent("tailor", {"index": index, "text": t})
 
     # 判断适配度：「这个岗位适合我吗」「投这个有戏吗」——判断优先于投递动作
-    if re.search(r"(适合|合适|匹配吗|能不能投|够不够|胜算|竞争力|有戏)", t):
-        return Intent("judge", {"index": _index(t), "text": t})
+    if re.search(r"(适合|合适|匹配吗|能不能投|够不够|胜算|竞争力|有戏|分析)", t) and re.search(
+        r"(第\s*[一二三四五六七八九十\d]+\s*个|这个|那个|它)", t
+    ):
+        return Intent("judge", {"index": _index(t), "indices": indices(t), "text": t})
 
     # 「投第 2 个 / 投这个」是投递；「投 3 个」是数量，算搜索参数
     if re.search(r"(投递|投)\s*(第\s*[一二三四五六七八九十\d]+\s*个|这个|那个|它)", t):
@@ -70,7 +106,7 @@ def classify(text: str) -> Intent:
         r"(要求|需求|职责|干什么|做什么|详情|介绍|公司|薪资|工资|地点|在哪|经验|学历|怎么样|是什么|内容)",
         t,
     ):
-        return Intent("ask_detail", {"index": _index(t), "text": t})
+        return Intent("ask_detail", {"index": _index(t), "indices": indices(t), "text": t})
 
     if re.search(r"(现在|当前|有什么|队列|状态|看看|列表|进度)", t):
         return Intent("status", {})

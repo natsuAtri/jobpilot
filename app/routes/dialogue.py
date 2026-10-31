@@ -45,7 +45,9 @@ async def dialogue_page(
             "doubts": doubts,
             "has_model": has_model,
             "err": err,
-            "msg": msg,
+            # 用 notice 而不是 msg：base.html 会用 msg 渲染一条全局横幅，
+            # 这里自带「去 Agent」链接，避免同一句话出现两次
+            "notice": msg,
         },
     )
 

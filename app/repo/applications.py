@@ -1,7 +1,6 @@
 """投递记录。"""
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ..db import get_conn, now_local
@@ -20,7 +19,7 @@ def create_application(job_id: int, resume_id: int, channel: str = "", notes: st
             "VALUES (?, ?, 'draft', ?, ?, ?)",
             (job_id, resume_id, channel or None, notes or None, now_local()),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def list_applications() -> list[dict[str, Any]]:
@@ -39,6 +38,14 @@ def list_applications() -> list[dict[str, Any]]:
 def get_application(app_id: int) -> dict[str, Any] | None:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM application WHERE id = ?", (app_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def find_by_job(job_id: int) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM application WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,)
+        ).fetchone()
     return dict(row) if row else None
 
 

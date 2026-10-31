@@ -150,7 +150,7 @@ def critique_stub(messages: list[dict[str, str]]) -> dict:
     return {"reviews": reviews}
 
 
-def generic_stub(task: str, messages: list[dict[str, str]]) -> dict:
+def generic_stub(task: str, messages: list[dict]) -> dict:
     if task == "dialogue":
         return dialogue_stub(messages)
     if task == "resume_rewrite":

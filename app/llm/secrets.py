@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-from pathlib import Path
 
 from ..config import SECRETS_PATH, ensure_dirs
 

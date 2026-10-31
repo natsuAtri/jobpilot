@@ -26,13 +26,13 @@ def _score_job(job: dict, doc) -> float:
 
 def _worker(run_id: str, keyword: str, city_code: str, limit: int, resume_id: int | None) -> None:
     try:
-        jobs = search_51job(
+        raw_jobs = search_51job(
             keyword,
             city_code=city_code,
             limit=limit,
             progress=lambda step: progress.update(run_id, step=step),
         )
-        jobs = [j.as_dict() for j in jobs]
+        jobs = [j.as_dict() for j in raw_jobs]
 
         if resume_id is not None:
             from ..repo import resumes

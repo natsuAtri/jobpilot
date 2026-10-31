@@ -26,6 +26,8 @@ TASKS: tuple[TaskSpec, ...] = (
     TaskSpec("resume_review", "简历整体建议", "便宜、结构化输出", temperature=0.3),
     TaskSpec("fit_judge", "岗位适配判断", "强推理 + 强 JSON", temperature=0.2),
     TaskSpec("intent_route", "意图兜底分类", "便宜、结构化输出", temperature=0.0),
+    TaskSpec("agent_tools", "Agent 工具调度", "便宜、支持 function calling", temperature=0.2),
+    TaskSpec("search_plan", "搜索关键词规划", "便宜、结构化输出", temperature=0.3),
     TaskSpec("dialogue", "对话补录", "中等即可", temperature=0.4),
 )
 

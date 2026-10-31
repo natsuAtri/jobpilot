@@ -42,11 +42,8 @@ def _job_or_404(job_id: int) -> dict:
 
 @router.get("")
 async def list_page(request: Request, msg: str | None = None):
-    return templates.TemplateResponse(
-        request,
-        "jobs_list.html",
-        {"active": "job", "jobs": job_repo.list_jobs(), "msg": msg},
-    )
+    """岗位列表页已下线：找岗位、看分数都走 Agent。"""
+    return RedirectResponse("/chat", status_code=303)
 
 
 # --------------------------------------------------------------- 搜索（须在 /{job_id} 之前注册）
@@ -92,7 +89,8 @@ async def search_status(run_id: str):
 @router.post("/search/import")
 async def search_import(request: Request):
     form = await request.form()
-    raw = form.get("jobs") or "[]"
+    raw = form.get("jobs")
+    raw = raw if isinstance(raw, str) else "[]"
     try:
         jobs = json.loads(raw)
     except json.JSONDecodeError:

@@ -20,7 +20,7 @@ def get_or_create_run(base_resume_id: int, job_id: int) -> int:
             "INSERT INTO generation_run(base_resume_id, job_id) VALUES (?, ?)",
             (base_resume_id, job_id),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
 
 def find_run(base_resume_id: int, job_id: int) -> dict[str, Any] | None:
@@ -112,3 +112,33 @@ def get_suggestions(run_id: int) -> list[dict]:
         return json.loads(row["suggestions_json"] or "[]")
     except json.JSONDecodeError:
         return []
+
+
+# ---------------------------------------------------------------- 步骤检查点
+def save_step(run_id: int, step: str, payload: Any) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO generation_step(run_id, step, payload_json) VALUES (?, ?, ?) "
+            "ON CONFLICT(run_id, step) DO UPDATE SET payload_json = excluded.payload_json",
+            (run_id, step, json.dumps(payload, ensure_ascii=False)),
+        )
+
+
+def load_steps(run_id: int) -> dict[str, Any]:
+    """读回已完成步骤，供断点续跑。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT step, payload_json FROM generation_step WHERE run_id = ?", (run_id,)
+        ).fetchall()
+    out: dict[str, Any] = {}
+    for row in rows:
+        try:
+            out[row["step"]] = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def clear_steps(run_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM generation_step WHERE run_id = ?", (run_id,))

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: ruff
+        run: ruff check .
+      - name: mypy
+        run: mypy --config-file pyproject.toml
+
+  test:
+    name: 单元测试（不依赖模型与浏览器）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 意图评估集
+        run: python tools/eval_intent.py
+      - name: Agent 路由 / 工具循环 / 澄清 / 检查点
+        run: python tools/smoke_agent.py
+      - name: 双 agent 生成
+        env:
+          RA_LLM_STUB: "1"
+        run: python tools/smoke_generate.py
+      - name: 投递记录
+        run: python tools/smoke_apply.py
+      - name: 个人库
+        run: python tools/smoke_search_personal.py
+      - name: 从零创建
+        env:
+          RA_LLM_STUB: "1"
+        run: python tools/smoke_scratch.py
+
+# 说明：
+# - smoke_m2 依赖本机 Chrome 打印 PDF，smoke_match / smoke_rag 依赖 2.3GB 本地模型，
+#   这三项只在本地跑，不进 CI（见 README「验证」一节）。

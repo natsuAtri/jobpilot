@@ -1,5 +1,56 @@
 {% extends "base.html" %}
-{% block title %}生成定制简历 · {{ job.title }}{% endblock %}
+{% block title %}生成定制简历 · {{ job.title }}
+<script>
+  // 终审页的按钮走 fetch，就地更新，不整页刷新（否则每点一次都要重新下滑）
+  (function () {
+    function applyState(item) {
+      const el = document.getElementById('item-' + item.id);
+      if (!el) return;
+      const badge = (name) => el.querySelector('[data-badge="' + name + '"]');
+      const acc = badge('accepted'), rej = badge('rejected'), man = badge('manual');
+      if (acc) acc.hidden = item.accepted !== 1;
+      if (rej) rej.hidden = !(item.accepted === 0 && !item.manual);
+      if (man) man.hidden = !item.manual;
+      if (item.manual) {
+        const ta = el.querySelector('textarea[name="text"]');
+        if (ta) ta.value = item.manual;
+      }
+    }
+
+    function updateCounter(data) {
+      if (data.accepted == null) return;
+      const counter = document.getElementById('acceptedCount');
+      if (counter) counter.textContent = '已采用 ' + data.accepted + ' 条';
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn) saveBtn.disabled = data.accepted === 0;
+    }
+
+    document.querySelectorAll('form.gen-ajax').forEach((form) => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector('button[type=submit]');
+        const old = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+        try {
+          const resp = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'X-Requested-With': 'fetch' },
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const data = await resp.json();
+          (data.items || []).forEach(applyState);
+          updateCounter(data);
+        } catch (err) {
+          form.submit();
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = old; }
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}
 {% block content %}
 
 <div class="editor-head">
@@ -13,6 +64,9 @@
 </div>
 
 {% if err %}<div class="banner banner-bad">{{ err }}</div>{% endif %}
+{% if pending_steps %}
+<div class="banner banner-warn">上次生成中断了，已完成 {{ pending_steps }} 步。点「重新生成」会从断点继续，已完成的步骤不会重复调用模型。</div>
+{% endif %}
 
 {% if not resumes %}
 <div class="card card-accent">
@@ -60,13 +114,14 @@
   {% endfor %}
 </section>
 {% elif items %}
-<div class="banner banner-warn" style="display:flex;align-items:center;gap:12px;justify-content:space-between">
-  <span>这次没有生成「优化建议」，可能是模型调用失败。</span>
-  <form method="post" action="/jobs/{{ job.id }}/generate/suggest/regen" data-busy="正在生成优化建议…">
+<section class="card">
+  <h2>优化建议 · 该补什么</h2>
+  <p class="hint">还没有针对这个岗位做分析。让 agent 看一眼 JD 和你的简历，就能告诉你简历该补什么（只建议补，不替你编）。</p>
+  <form method="post" action="/jobs/{{ job.id }}/generate/suggest/regen" data-busy="正在分析 JD 与简历，约 5–10 秒…">
     <input type="hidden" name="resume_id" value="{{ resume_id }}">
-    <button class="btn btn-sm" type="submit">重新生成建议</button>
+    <button class="btn btn-sm" type="submit">让 agent 分析</button>
   </form>
-</div>
+</section>
 {% endif %}
 
 <div id="suggestModal" class="modal" hidden>
@@ -105,20 +160,20 @@
 <section class="card">
   <div class="rewrite-head">
     <h2 style="margin:0">终审 {{ items | length }} 条</h2>
-    <span class="muted small">已采用 {{ accepted }} 条</span>
+    <span class="muted small" id="acceptedCount">已采用 {{ accepted }} 条</span>
   </div>
 
   <div class="gen-list">
     {% for it in items %}
-    <div class="gen-item {{ 'is-blocked' if it.blocked else '' }}">
+    <div class="gen-item {{ 'is-blocked' if it.blocked else '' }}" id="item-{{ it.id }}">
       <div class="rw-meta">
         <span class="tag">{{ it.label or it.source_id }}</span>
         {% if it.priority == 'high' %}<span class="tag tag-ok">高价值</span>{% endif %}
         {% if it.priority == 'low' %}<span class="tag">仅措辞</span>{% endif %}
         {% if it.blocked %}<span class="tag tag-bad">被闸门拦截</span>{% endif %}
-        {% if it.accepted == 1 %}<span class="tag tag-ok">已采用</span>{% endif %}
-        {% if it.accepted == 0 %}<span class="tag">未采用</span>{% endif %}
-        {% if it.manual %}<span class="tag tag-ok">已手动修改</span>{% endif %}
+        <span class="tag tag-ok" data-badge="accepted" {{ '' if it.accepted == 1 else 'hidden' }}>已采用</span>
+        <span class="tag" data-badge="rejected" {{ '' if it.accepted == 0 and not it.manual else 'hidden' }}>未采用</span>
+        <span class="tag tag-ok" data-badge="manual" {{ '' if it.manual else 'hidden' }}>已手动修改</span>
       </div>
 
       <div class="gen-orig">原文：{{ it.original }}</div>
@@ -142,17 +197,17 @@
       </div>
 
       <div class="gen-actions">
-        <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/edit" class="gen-edit">
+        <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/edit" class="gen-edit gen-ajax" data-busy="skip">
           <input type="hidden" name="resume_id" value="{{ resume_id }}">
           <textarea name="text" rows="2">{{ it.manual or it.rewritten }}</textarea>
           <button class="btn btn-sm btn-ghost" type="submit">保存修改</button>
         </form>
         <div class="gen-buttons">
-          <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/accept">
+          <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/accept" class="gen-ajax" data-busy="skip">
             <input type="hidden" name="resume_id" value="{{ resume_id }}">
             <button class="btn btn-sm" type="submit" {{ 'disabled' if it.blocked }}>采用</button>
           </form>
-          <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/reject">
+          <form method="post" action="/jobs/{{ job.id }}/generate/item/{{ it.id }}/reject" class="gen-ajax" data-busy="skip">
             <input type="hidden" name="resume_id" value="{{ resume_id }}">
             <button class="btn btn-sm btn-ghost" type="submit">不用</button>
           </form>
@@ -162,7 +217,7 @@
     {% endfor %}
   </div>
 
-  <form method="post" action="/jobs/{{ job.id }}/generate/accept-all" class="inline-form" style="margin-top:14px">
+  <form method="post" action="/jobs/{{ job.id }}/generate/accept-all" class="inline-form gen-ajax" data-busy="skip" style="margin-top:14px">
     <input type="hidden" name="resume_id" value="{{ resume_id }}">
     <button class="btn btn-sm" type="submit">一键采用全部通过校验的条目</button>
     <span class="muted small">只采用三守恒通过、且有实质改动的条目；被拦截的不会采用。</span>
@@ -170,11 +225,62 @@
 
   <form method="post" action="/jobs/{{ job.id }}/generate/save" class="tailor-save">
     <input type="hidden" name="resume_id" value="{{ resume_id }}">
-    <button class="btn" type="submit" {{ 'disabled' if accepted == 0 }}>生成最终简历</button>
+    <button class="btn" type="submit" id="saveBtn" {{ 'disabled' if accepted == 0 }}>生成最终简历</button>
     <span class="muted small">采用「已采用」或「已手动修改」的内容，生成一份新的定制简历，不影响原简历。</span>
   </form>
 </section>
 {% endif %}
 
 {% endif %}
+
+<script>
+  // 终审页的按钮走 fetch，就地更新，不整页刷新（否则每点一次都要重新下滑）
+  (function () {
+    function applyState(item) {
+      const el = document.getElementById('item-' + item.id);
+      if (!el) return;
+      const badge = (name) => el.querySelector('[data-badge="' + name + '"]');
+      const acc = badge('accepted'), rej = badge('rejected'), man = badge('manual');
+      if (acc) acc.hidden = item.accepted !== 1;
+      if (rej) rej.hidden = !(item.accepted === 0 && !item.manual);
+      if (man) man.hidden = !item.manual;
+      if (item.manual) {
+        const ta = el.querySelector('textarea[name="text"]');
+        if (ta) ta.value = item.manual;
+      }
+    }
+
+    function updateCounter(data) {
+      if (data.accepted == null) return;
+      const counter = document.getElementById('acceptedCount');
+      if (counter) counter.textContent = '已采用 ' + data.accepted + ' 条';
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn) saveBtn.disabled = data.accepted === 0;
+    }
+
+    document.querySelectorAll('form.gen-ajax').forEach((form) => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector('button[type=submit]');
+        const old = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+        try {
+          const resp = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'X-Requested-With': 'fetch' },
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const data = await resp.json();
+          (data.items || []).forEach(applyState);
+          updateCounter(data);
+        } catch (err) {
+          form.submit();
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = old; }
+        }
+      });
+    });
+  })();
+</script>
 {% endblock %}

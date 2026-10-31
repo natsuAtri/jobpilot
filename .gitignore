@@ -31,3 +31,6 @@ samples/*.html
 .tmp*/
 .pipcache/
 pip-*
+
+# 本地静态检查工具（ruff 等）
+.devtools/

@@ -9,8 +9,11 @@
 """
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from typing import Any
 
+from ..config import UPLOADS_DIR
 from ..db import get_conn, now_local
 from ..models import ResumeDoc
 
@@ -152,3 +155,51 @@ def apply_to_doc(doc: ResumeDoc) -> int:
         )]))
         filled += 1
     return filled
+
+# ---------------------------------------------------------------- 照片
+PHOTO_KEY = "photo"
+
+
+def photo_path() -> Path | None:
+    """个人库里的照片文件路径（没有就返回 None）。"""
+    name = get(PHOTO_KEY)
+    if not name:
+        return None
+    path = Path(UPLOADS_DIR) / name
+    return path if path.exists() else None
+
+
+def set_photo(data: bytes, ext: str = "jpg", source: str = "manual") -> str:
+    """保存照片到 data/uploads，并在个人库记下文件名。"""
+    ext = "png" if ext.lower() == "png" else "jpg"
+    name = f"photo.{ext}"
+    path = Path(UPLOADS_DIR) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    # 换格式时清掉另一份，避免目录里堆垃圾
+    other = Path(UPLOADS_DIR) / ("photo.png" if ext == "jpg" else "photo.jpg")
+    if other.exists():
+        other.unlink(missing_ok=True)
+    set_value(PHOTO_KEY, name, source=source)
+    return name
+
+
+def delete_photo() -> None:
+    path = photo_path()
+    if path is not None:
+        path.unlink(missing_ok=True)
+    with get_conn() as conn:
+        conn.execute("DELETE FROM personal_data WHERE key = ?", (PHOTO_KEY,))
+
+
+def photo_data_uri() -> str | None:
+    """转成 data URI，模板里直接 <img src="…">，导出时不必再读文件。"""
+    path = photo_path()
+    if path is None:
+        return None
+    try:
+        raw = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return f"data:{mime};base64,{raw}"

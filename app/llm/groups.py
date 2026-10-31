@@ -9,6 +9,8 @@ TASK_GROUP: dict[str, str] = {
     "resume_gaps_suggest": "cheap",
     "resume_review": "cheap",
     "intent_route": "cheap",
+    "agent_tools": "cheap",
+    "search_plan": "cheap",
     "dialogue": "cheap",
 }
 

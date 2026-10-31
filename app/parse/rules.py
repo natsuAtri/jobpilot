@@ -231,7 +231,7 @@ def _build_items(section: RawSection, base_x: float) -> list[Item]:
 
         has_date = bool(DATE_RANGE.search(text) or DATE_TOKEN.search(text))
         kv = KV_SPLIT.search(text)
-        is_kv = bool(kv) and len(text[: kv.start()].strip()) <= 8
+        is_kv = kv is not None and len(text[: kv.start()].strip()) <= 8
 
         if _is_bullet(line, base_x):
             if current is None:
@@ -243,6 +243,7 @@ def _build_items(section: RawSection, base_x: float) -> list[Item]:
             continue
 
         if is_kv:
+            assert kv is not None
             # 「技术栈：…」「语言能力：…」属于条目的附属信息，不是新条目
             if current is None:
                 current = Item()

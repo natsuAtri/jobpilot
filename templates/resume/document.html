@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -30,7 +30,7 @@
   }
 
   /* ---------------- header ---------------- */
-  .head{display:flex;justify-content:space-between;align-items:center;gap:8mm;}
+  .head{display:flex;justify-content:space-between;align-items:center;gap:7mm;}
   .head-main{flex:1;min-width:0;}
   .name-line{display:flex;align-items:flex-end;gap:5mm;}
   h1{font-size:26pt;font-weight:700;letter-spacing:.05em;line-height:1;color:var(--accent);}
@@ -39,15 +39,15 @@
     border:.6pt solid var(--accent-soft);padding:1.7mm 3mm .7mm 3mm;line-height:1.5;margin-bottom:.8mm;
   }
   .photo{
-    width:25mm;height:35mm;flex:none;object-fit:cover;
+    width:19mm;height:26mm;flex:none;object-fit:cover;
     border:.6pt dashed #C6CBD3;border-radius:.8mm;background:#FBFCFD;
   }
   .contact{
-    margin-top:4.4mm;font-size:8.9pt;color:var(--muted);letter-spacing:.02em;
+    margin-top:2.8mm;font-size:8.9pt;color:var(--muted);letter-spacing:.02em;
     display:flex;align-items:center;gap:3mm;flex-wrap:wrap;
   }
   .contact .sep{width:.5pt;height:7.6pt;background:#CDD2D9;}
-  .head-rule{margin-top:4.6mm;height:1pt;background:var(--accent);}
+  .head-rule{margin-top:3.4mm;height:1pt;background:var(--accent);}
 
   /* ---------------- section ---------------- */
   section{margin-top:7.6mm;break-inside:avoid;}
@@ -100,18 +100,17 @@
         <h1>{{ doc.name }}</h1>
         {% if doc.intents %}<div class="intent">求职意向&nbsp;&nbsp;{{ doc.intents }}</div>{% endif %}
       </div>
+      <div class="contact">
+        {% set parts = [] %}
+        {% if doc.phone %}{% set _ = parts.append(doc.phone) %}{% endif %}
+        {% if doc.email %}{% set _ = parts.append(doc.email) %}{% endif %}
+        {% if doc.location %}{% set _ = parts.append(doc.location) %}{% endif %}
+        {% for p in parts %}
+          {% if not loop.first %}<span class="sep"></span>{% endif %}<span>{{ p }}</span>
+        {% endfor %}
+      </div>
     </div>
     {% if photo and not ats %}<img class="photo" src="{{ photo }}" alt="">{% endif %}
-  </div>
-
-  <div class="contact">
-    {% set parts = [] %}
-    {% if doc.phone %}{% set _ = parts.append(doc.phone) %}{% endif %}
-    {% if doc.email %}{% set _ = parts.append(doc.email) %}{% endif %}
-    {% if doc.location %}{% set _ = parts.append(doc.location) %}{% endif %}
-    {% for p in parts %}
-      {% if not loop.first %}<span class="sep"></span>{% endif %}<span>{{ p }}</span>
-    {% endfor %}
   </div>
 
   <div class="head-rule"></div>

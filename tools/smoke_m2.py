@@ -13,8 +13,8 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
-from app.repo import resumes as repo  # noqa: E402
 from app.render import build_context, expected_fragments, render_html, verify_pdf  # noqa: E402
+from app.repo import resumes as repo  # noqa: E402
 
 failures: list[str] = []
 

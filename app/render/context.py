@@ -46,19 +46,28 @@ def _section_label(section: Section) -> str:
     return SECTION_LABELS.get(section.type, "其他")
 
 
-def build_context(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design") -> dict:
+def build_context(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design",
+                  photo: str | None = None) -> dict:
     sections = []
     for section in sorted(doc.sections, key=lambda s: s.order_index):
+        kind = _section_kind(section)
         items = []
         for item in sorted(section.items, key=lambda i: i.order_index):
             bullets = [b for b in item.bullets if b.text.strip()]
+            bullet_texts = [{"text": b.text} for b in bullets]
+            # 奖项/证书这类章节模板只渲染 bullets；如果解析结果把内容放在
+            # org/role 里（「竞赛名 + 一等奖」），拼成一行兜底，别整节省略掉
+            if not bullet_texts and kind == "bullets":
+                fallback = " ".join(x for x in (item.org, item.role) if x)
+                if fallback:
+                    bullet_texts = [{"text": fallback}]
             items.append(
                 {
                     "org": item.org,
                     "role": item.role,
                     "period": format_period(item.start, item.end),
                     "meta": {k: v for k, v in item.meta.items() if v},
-                    "bullets": [{"text": b.text} for b in bullets],
+                    "bullets": bullet_texts,
                 }
             )
         if not items:
@@ -67,7 +76,7 @@ def build_context(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design"
             {
                 "type": section.type,
                 "label": _section_label(section),
-                "kind": _section_kind(section),
+                "kind": kind,
                 "items": items,
             }
         )
@@ -77,7 +86,7 @@ def build_context(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design"
         "sections": sections,
         "theme": theme,
         "ats": variant == "ats",
-        "photo": None,
+        "photo": photo,
     }
 
 

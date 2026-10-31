@@ -2,6 +2,7 @@
 {% block title %}Agent · JobPilot{% endblock %}
 {% block content %}
 
+<div class="agent-layout {{ '' if has_resume else 'agent-layout-single' }}">
 <div class="chat-shell">
   <div class="chat-top">
     <div>
@@ -31,11 +32,9 @@
       <div class="msg-time">{{ m.created_at[11:16] if m.created_at else '' }}</div>
     </div>
     {% endfor %}
-
-    <div class="cand-panel" id="candidate-block"></div>
   </div>
 
-  <form method="post" action="/chat" class="chat-composer" id="chatForm">
+  <form method="post" action="/chat" class="chat-composer" id="chatForm" data-busy="skip">
     <input type="hidden" name="resume_id" value="{{ resume_id }}">
     <textarea name="text" rows="2" placeholder="说点什么，比如：找北京的 AI 应用岗位，匹配 60 以上" required></textarea>
     <button class="btn" type="submit">发送</button>
@@ -43,11 +42,49 @@
   {% endif %}
 </div>
 
+{% if has_resume %}
+<aside class="agent-side">
+  <div class="cand-panel" id="candidate-block">
+    <div id="candPlaceholder">
+      <div class="cand-panel-head">
+        <div class="cand-panel-title">当前候选<span>搜索后填充</span></div>
+      </div>
+      <div class="cand-row is-sample">
+        <span class="cand-idx">1</span>
+        <span class="cand-name">AI 应用工程师</span>
+        <span class="cand-meta">字节跳动 · 北京·海淀区</span>
+        <span class="cand-score">69.8</span>
+        <span class="cand-acts"><span class="cand-btn is-ghost">详情</span><span class="cand-btn is-ghost">定制</span><span class="cand-btn is-ghost">投递</span></span>
+      </div>
+      <div class="cand-row is-sample">
+        <span class="cand-idx">2</span>
+        <span class="cand-name">大模型应用开发工程师</span>
+        <span class="cand-meta">美团 · 北京·朝阳区</span>
+        <span class="cand-score">68.1</span>
+        <span class="cand-acts"><span class="cand-btn is-ghost">详情</span><span class="cand-btn is-ghost">定制</span><span class="cand-btn is-ghost">投递</span></span>
+      </div>
+      <div class="cand-row is-sample">
+        <span class="cand-idx">3</span>
+        <span class="cand-name">算法工程师</span>
+        <span class="cand-meta">百度 · 北京·大兴区</span>
+        <span class="cand-score">66.4</span>
+        <span class="cand-acts"><span class="cand-btn is-ghost">详情</span><span class="cand-btn is-ghost">定制</span><span class="cand-btn is-ghost">投递</span></span>
+      </div>
+      <div class="cand-empty-note">以上为示例 · 搜岗位后替换为真实候选</div>
+    </div>
+    <div id="candList"></div>
+  </div>
+</aside>
+{% endif %}
+</div>
+
 <script>
   const resumeId = {{ (resume_id or '') | tojson }};
   const INITIAL_CANDIDATES = {{ (candidates or []) | tojson }};
   const messagesEl = document.getElementById('messages');
   const candidateEl = document.getElementById('candidate-block');
+  const candListEl = document.getElementById('candList');
+  const candPlaceholderEl = document.getElementById('candPlaceholder');
   const form = document.getElementById('chatForm');
   const input = form ? form.querySelector('textarea') : null;
 
@@ -152,9 +189,14 @@
   }
 
   function renderCandidates(cands) {
-    if (!candidateEl) return;
+    if (!candidateEl || !candListEl) return;
     lastCandidates = cands || [];
-    if (!lastCandidates.length) { candidateEl.innerHTML = ''; return; }
+    if (!lastCandidates.length) {
+      candListEl.innerHTML = '';
+      if (candPlaceholderEl) candPlaceholderEl.hidden = false;
+      return;
+    }
+    if (candPlaceholderEl) candPlaceholderEl.hidden = true;
 
     const total = lastCandidates.length;
     const shown = candExpanded ? lastCandidates : lastCandidates.slice(0, PREVIEW_COUNT);
@@ -162,7 +204,7 @@
       ? `<button type="button" class="cand-toggle" onclick="toggleCandidates()">${candExpanded ? '收起' : `展开全部 ${total} 个`}</button>`
       : '';
 
-    candidateEl.innerHTML =
+    candListEl.innerHTML =
       `<div class="cand-panel-head"><div class="cand-panel-title">当前候选<span>${total} 个</span></div>${toggle}</div>` +
       shown.map(c => `
         <div class="cand-row" data-idx="${c.index}">
@@ -178,7 +220,7 @@
           <div class="cand-jd" hidden>${esc(c.jd || '（没有抓到 JD 正文）')}</div>
         </div>`).join('');
 
-    candidateEl.querySelectorAll('.cand-btn').forEach(btn => {
+    candListEl.querySelectorAll('.cand-btn').forEach(btn => {
       btn.onclick = () => {
         const row = btn.closest('.cand-row');
         const idx = row.dataset.idx;
@@ -215,6 +257,12 @@
     } catch (err) {
       dots.remove();
       bubble('agent', '请求失败：' + err.message);
+    } finally {
+      // 双保险：任何情况下都清掉整屏遮罩，绝不让页面卡在「处理中」
+      const busy = document.getElementById('busy');
+      if (busy) busy.hidden = true;
+      const btn = form ? form.querySelector('button[type=submit]') : null;
+      if (btn) { btn.disabled = false; }
     }
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }

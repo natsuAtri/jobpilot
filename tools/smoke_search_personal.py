@@ -13,7 +13,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
-from app.models import Bullet, Item, ResumeDoc, Section  # noqa: E402
+from app.models import Item, ResumeDoc, Section  # noqa: E402
 from app.search.fiftyone import parse_item  # noqa: E402
 
 failures: list[str] = []

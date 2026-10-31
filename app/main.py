@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import STATIC_DIR, ensure_dirs
 from .db import migrate
 from .routes import apply, chat, dialogue, generate, jobs, pages, personal, resumes
+from .templating import ASSET_VERSION
 
 
 def _warmup_models() -> None:
@@ -28,7 +29,8 @@ def _warmup_models() -> None:
             from .rag.embed import embed
 
             embed(["预热"])
-        from .rag.rerank import available as rerank_available, get_model
+        from .rag.rerank import available as rerank_available
+        from .rag.rerank import get_model
 
         if rerank_available():
             get_model()
@@ -60,7 +62,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> HTMLR
     detail = f"{type(exc).__name__}: {exc}"
     return HTMLResponse(
         f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>出错了 · JobPilot</title><link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/theme.css"></head>
+<title>出错了 · JobPilot</title><link rel="stylesheet" href="/static/app.css?v={ASSET_VERSION}"><link rel="stylesheet" href="/static/theme.css?v={ASSET_VERSION}"></head>
 <body><header class="topbar"><a class="brand" href="/chat">Job<em>Pilot</em></a></header>
 <main class="wrap"><h1 class="page-title">操作没有完成</h1>
 <div class="banner banner-bad">{detail}</div>

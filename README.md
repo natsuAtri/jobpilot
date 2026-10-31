@@ -169,7 +169,8 @@ mypy --config-file pyproject.toml     # 类型检查（app/ 零错误）
 ```
 
 CI 在每次 push 时自动跑 ruff + mypy + 不依赖模型/浏览器的测试；
-`smoke_m2`（需要本机 Chrome）与 `smoke_match` / `smoke_rag`（需要 2.3GB 本地模型）只在本地跑。
+`smoke_m2` / `smoke_scratch`（需要 Chromium 打印 PDF）与 `smoke_match` / `smoke_rag`
+（需要 2.3GB 本地模型）只在本地跑。
 
 改对话行为后请同步更新 `tools/eval_agent.py` 的用例，避免「改 A 坏 B」。
 

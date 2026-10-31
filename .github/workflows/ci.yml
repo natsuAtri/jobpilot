@@ -45,11 +45,7 @@ jobs:
         run: python tools/smoke_apply.py
       - name: 个人库
         run: python tools/smoke_search_personal.py
-      - name: 从零创建
-        env:
-          RA_LLM_STUB: "1"
-        run: python tools/smoke_scratch.py
 
 # 说明：
-# - smoke_m2 依赖本机 Chrome 打印 PDF，smoke_match / smoke_rag 依赖 2.3GB 本地模型，
-#   这三项只在本地跑，不进 CI（见 README「验证」一节）。
+# - smoke_m2 与 smoke_scratch 需要 Chromium 打印 PDF（CI 没装 playwright 浏览器），
+#   smoke_match / smoke_rag 需要 2.3GB 本地模型。这四项只在本地跑，见 README「验证」。

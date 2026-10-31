@@ -1,4 +1,13 @@
-﻿# 语义检索与精排（可选）
+# 语义检索与精排（可选）
 # 安装后首次使用会下载 bge-small-zh-v1.5（~180MB）与 bge-reranker-v2-m3（~2.1GB）
-numpy>=1.26
-sentence-transformers>=3.0
+#
+# ⚠ 这些包必须来自同一个 Python 环境、且版本互相兼容：
+#     sentence-transformers 6.x 要求 transformers >= 5.0
+#   如果环境里已经有旧版 transformers（例如 4.41），又加载了
+#   sentence-transformers 6.x，就会报：
+#     AttributeError: 'BertConfig' object has no attribute 'sub_configs'
+#   用 `python tools/check_env.py` 可以自检。
+numpy>=1.26,<3
+torch>=2.2
+transformers>=5.0,<6
+sentence-transformers>=6.0,<7

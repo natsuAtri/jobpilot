@@ -20,6 +20,7 @@ _VENVLIB = BASE / ".venvlib"
 
 
 def _import_uvicorn():
+    global USING_VENVLIB
     try:
         import uvicorn  # noqa: F401
         return uvicorn
@@ -30,6 +31,7 @@ def _import_uvicorn():
         sys.path.append(str(_VENVLIB))
         try:
             import uvicorn  # noqa: F811
+            USING_VENVLIB = True
             return uvicorn
         except ModuleNotFoundError:
             pass
@@ -42,12 +44,30 @@ def _import_uvicorn():
     )
 
 
+USING_VENVLIB = False
+# 先看当前环境是不是已经装过 transformers——这决定了下面混用 .venvlib 有没有风险
+try:
+    import transformers  # noqa: F401
+
+    PREEXISTING_ML = True
+except Exception:  # noqa: BLE001
+    PREEXISTING_ML = False
+
 uvicorn = _import_uvicorn()
 
 if __name__ == "__main__":
     port = int(os.environ.get("RA_PORT", "8000"))
     host = os.environ.get("RA_HOST", "127.0.0.1")
     reload = os.environ.get("RA_RELOAD", "1") == "1"
+    if USING_VENVLIB and PREEXISTING_ML:
+        print(
+            "⚠ 当前环境已装有 transformers，又叠加了项目自带的 .venvlib，\n"
+            "  两边的版本可能不一致，语义检索会报\n"
+            "      'BertConfig' object has no attribute 'sub_configs'。\n"
+            "  建议把依赖装进当前环境后重新启动：\n"
+            "      pip install -r requirements.txt -r requirements-rag.txt\n"
+            "  自检：python tools/check_env.py\n"
+        )
     print(f"JobPilot → http://{host}:{port}")
     print("按 Ctrl+C 停止")
     uvicorn.run("app.main:app", host=host, port=port, reload=reload)

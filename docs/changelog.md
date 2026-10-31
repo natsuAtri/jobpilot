@@ -405,3 +405,39 @@ python tools/smoke_generate.py
 
 **注意**：旧工作目录 `C:\Users\Lenovo\Documents\deepseek-harness\default-workspace` 已清空，
 以后在该目录下打开的会话需要改到 `D:\workspace\JobPilot`。
+---
+
+## 第 26 轮：修复语义依赖版本冲突 + 降级不再静默
+
+**问题**
+1. 岗位匹配报 `AttributeError: 'BertConfig' object has no attribute 'sub_configs'`
+2. 搜索结果第一个岗位出现 100 分
+
+**根因（两者同源）**
+
+`sentence-transformers 6.x` 要求 `transformers >= 5.0`，而用户的启动环境（Anaconda）
+里是 `transformers 4.41`、且没有 `sentence-transformers`。`run.py` 在缺依赖时把
+`.venvlib` **追加**到 `sys.path`，于是 transformers 用了 Anaconda 的 4.41、
+sentence-transformers 用了 `.venvlib` 的 6.2 → 版本冲突。
+
+模型不可用后，`project_relevance` / `direction_similarity` 返回 None，
+这两个维度被跳过，权重重新归一化到「关键词+年限+语言」——三项满分就是 **100 分**。
+
+**改动**
+1. `semantic.py`：三个入口统一包 try/except，模型挂了返回空结果而不是抛异常；
+   新增 `degraded()` 标记，并只打印一次告警（含修法），避免静默降级
+2. `routes/jobs.py`：匹配路由再兜一层；语义降级时给 `MatchResult.notes` 追加提示
+   「本次只用三项打分，分数会偏高」，详情页用现有 banner 展示
+3. `run.py`：检测「当前环境已有 transformers + 又叠加 .venvlib」才警告（纯 .venvlib
+   运行不再误报），并指向 `tools/check_env.py`
+4. 新增 `tools/check_env.py`：打印依赖版本/来源、校验版本兼容、实际跑一次
+   embedding 与 rerank，给出可执行的修法
+5. `requirements-rag.txt`：锁定 `transformers>=5.0,<6` + `sentence-transformers>=6.0,<7`，
+   并注明这个坑
+6. README 增加故障排查小节
+
+**验证**
+- Anaconda 环境：`check_env.py` 明确报出版本冲突；`semantic_evidence` 返回 `[]`、
+  `degraded()` 为 True（不再 500）
+- DSH runtime 环境：`degraded()` 为 False，语义维度正常参与打分
+- 回归 118 项全绿（m1 需要样本 PDF，本次跳过）

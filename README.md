@@ -47,6 +47,26 @@ python run.py                      # 默认 http://127.0.0.1:8000
 > **不装 `requirements-rag.txt` 也能用**：语义证据与「项目对口度」会自动降级，
 > 导入、编辑、导出、关键词匹配等其余功能不受影响。
 
+### 语义匹配报 `'BertConfig' object has no attribute 'sub_configs'`
+
+**依赖版本不匹配**：`sentence-transformers 6.x` 要求 `transformers >= 5.0`，
+而当前环境里可能是 4.x（或两个 Python 环境的包被混用了）。
+
+先自检，它会直接告诉你哪一项不对：
+
+```bash
+python tools/check_env.py
+```
+
+再在**启动应用的同一个环境**里升级：
+
+```bash
+pip install -U "transformers>=5.0,<6" "sentence-transformers>=6.0,<7"
+```
+
+> 不要混用两个 Python 环境。项目里的 `.venvlib` 只是兜底，和系统 Python 的包
+> 混在一起就会触发这个问题；`run.py` 检测到混用时会打印警告。
+
 ### 装依赖慢？
 
 pip 源慢就换镜像：

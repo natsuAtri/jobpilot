@@ -20,9 +20,45 @@ MAX_JD_CHUNKS = 10
 RERANK_THRESHOLD = 0.05
 DENSE_THRESHOLD = 0.35
 
+_warned = False
+_degraded = False
+
+
+def degraded() -> bool:
+    """语义能力是否因模型不可用而降级过（供页面提示用）。"""
+    return _degraded
+
+
+def _warn_degraded(exc: BaseException) -> None:
+    """模型不可用时只提示一次——否则每次打分都刷屏。
+
+    降级本身不可怕，可怕的是用户不知道为什么分数变了。
+    """
+    global _warned, _degraded
+    _degraded = True
+    if _warned:
+        return
+    _warned = True
+    print(
+        "[semantic] 语义模型不可用，匹配已降级为关键词打分"
+        f"（{type(exc).__name__}: {exc}）。\n"
+        "           常见原因：当前 Python 环境的 transformers 版本与"
+        " sentence-transformers 不匹配。\n"
+        "           解决：在启动应用的同一个环境里执行 "
+        "pip install -r requirements.txt -r requirements-rag.txt"
+    )
+
 
 def semantic_evidence(doc: ResumeDoc, jd_text: str, top_k: int = 1) -> list[dict]:
     """对 JD 每个「要求」片段，找简历里语义最相近、且超过阈值的 bullet。"""
+    try:
+        return _semantic_evidence(doc, jd_text, top_k)
+    except Exception as exc:  # noqa: BLE001 - 模型挂了也不能让打分 500
+        _warn_degraded(exc)
+        return []
+
+
+def _semantic_evidence(doc: ResumeDoc, jd_text: str, top_k: int = 1) -> list[dict]:
     resume_chunks = chunk_resume(doc)
     jd_chunks = chunk_jd(jd_text)  # 已剔除「介绍/职责」类段落
     if not resume_chunks or not jd_chunks:
@@ -92,7 +128,8 @@ def project_relevance(doc: ResumeDoc, jd_text: str) -> float | None:
             _PROJECT_CACHE[key] = embed([c.text for c in resume_chunks])
         resume_vecs = _PROJECT_CACHE[key]
         jd_vecs = embed([c.text for c in jd_chunks])
-    except Exception:  # noqa: BLE001 - 模型异常不影响主流程
+    except Exception as exc:  # noqa: BLE001 - 模型异常不影响主流程
+        _warn_degraded(exc)
         return None
 
     total = 0.0
@@ -145,7 +182,8 @@ def direction_similarity(doc: ResumeDoc, jd_text: str) -> float | None:
             _DIRECTION_CACHE[key] = embed([resume_text])[0]
         resume_vec = _DIRECTION_CACHE[key]
         jd_vec = embed([jd_req])[0]
-    except Exception:  # noqa: BLE001 - 模型异常不影响主流程
+    except Exception as exc:  # noqa: BLE001 - 模型异常不影响主流程
+        _warn_degraded(exc)
         return None
 
     cosine = float(sum(a * b for a, b in zip(resume_vec, jd_vec)))

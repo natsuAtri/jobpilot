@@ -187,13 +187,23 @@ async def run_match(job_id: int, resume_id: int = Form(...)):
     direction = None
     project = None
     if job.get("description_raw") and semantic.evidence_available():
-        direction = semantic.direction_similarity(doc, job["description_raw"])
-        project = semantic.project_relevance(doc, job["description_raw"])
-        evidence = semantic.semantic_evidence(doc, job["description_raw"])
+        try:
+            direction = semantic.direction_similarity(doc, job["description_raw"])
+            project = semantic.project_relevance(doc, job["description_raw"])
+            evidence = semantic.semantic_evidence(doc, job["description_raw"])
+        except Exception as exc:  # noqa: BLE001 - 模型环境坏了也要出分，不能 500
+            print(f"[match] 语义匹配不可用，降级为关键词打分：{type(exc).__name__}: {exc}")
 
     result = evaluate(doc, job["description_raw"] or "",
                       job_type=job.get("job_type") or "unknown",
                       direction=direction, project=project)
+
+    # 语义维度没跑出来时，分数只剩关键词/年限/语言三项，会明显偏高——必须说清楚
+    if job.get("description_raw") and semantic.degraded():
+        result.notes.append(
+            "语义模型未就绪，本次只用「关键词 / 年限 / 语言」三项打分，分数会偏高。"
+            "修复环境后重新匹配即可（运行 python tools/check_env.py 自查）。"
+        )
 
     job_repo.save_match(job_id, resume_id, result, evidence=evidence)
     return RedirectResponse(f"/jobs/{job_id}?resume_id={resume_id}", status_code=303)

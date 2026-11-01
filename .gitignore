@@ -34,3 +34,7 @@ pip-*
 
 # 本地静态检查工具（ruff 等）
 .devtools/
+
+# 调试用的解析坐标导出（含真实简历内容，绝不入库）
+tools/resume_runs.json
+*_runs.json

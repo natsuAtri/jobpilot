@@ -1,0 +1,95 @@
+{
+  "id": "tailor_proposal",
+  "utterance": "帮我定制第二个",
+  "state": {
+    "candidates": [
+      {
+        "source_id": "1",
+        "title": "AI 应用工程师",
+        "company": "字节跳动",
+        "location": "北京",
+        "score": 69.8,
+        "url": "https://example.com/1",
+        "description": "岗位职责：负责大模型应用落地。任职要求：Python、RAG、后端经验。"
+      },
+      {
+        "source_id": "2",
+        "title": "视觉算法工程师",
+        "company": "百度",
+        "location": "北京",
+        "score": 66.4,
+        "url": "https://example.com/2",
+        "description": "岗位职责：视觉算法研发。任职要求：深度学习、目标检测。"
+      },
+      {
+        "source_id": "3",
+        "title": "后端开发工程师",
+        "company": "美团",
+        "location": "北京",
+        "score": 55.2,
+        "url": "https://example.com/3",
+        "description": "岗位职责：服务端开发。任职要求：Python、MySQL、高并发。"
+      }
+    ],
+    "queue": [],
+    "filters": {},
+    "goal": {}
+  },
+  "fake_candidates": [
+    {
+      "source_id": "1",
+      "title": "AI 应用工程师",
+      "company": "字节跳动",
+      "location": "北京",
+      "score": 69.8,
+      "url": "https://example.com/1",
+      "description": "岗位职责：负责大模型应用落地。任职要求：Python、RAG、后端经验。"
+    },
+    {
+      "source_id": "2",
+      "title": "视觉算法工程师",
+      "company": "百度",
+      "location": "北京",
+      "score": 66.4,
+      "url": "https://example.com/2",
+      "description": "岗位职责：视觉算法研发。任职要求：深度学习、目标检测。"
+    },
+    {
+      "source_id": "3",
+      "title": "后端开发工程师",
+      "company": "美团",
+      "location": "北京",
+      "score": 55.2,
+      "url": "https://example.com/3",
+      "description": "岗位职责：服务端开发。任职要求：Python、MySQL、高并发。"
+    }
+  ],
+  "responses": [
+    {
+      "finish_reason": "",
+      "content": "",
+      "tool_calls": [
+        {
+          "index": 0,
+          "id": "call_00_AqWlwBgjnq0b4P4LCFjN3393",
+          "type": "function",
+          "function": {
+            "name": "tailor_resume",
+            "arguments": "{\"index\": 2}"
+          }
+        }
+      ]
+    },
+    {
+      "finish_reason": "",
+      "content": "已为你准备好针对「视觉算法工程师（百度）」的简历定制方案，现在需要你确认。要我执行吗？\n\n· 针对该岗位将突出：视觉相关项目经验、PyTorch 建模能力\n· 你现有的 YOLOv8 手势识别项目会往目标检测、视觉工程方向包装\n· 确认后我就开始改",
+      "tool_calls": []
+    }
+  ],
+  "expect": {
+    "tools": [
+      "tailor_resume"
+    ],
+    "reply_contains": "已为你准备好针对「视觉算"
+  }
+}

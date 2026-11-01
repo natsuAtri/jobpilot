@@ -202,6 +202,7 @@ class ToolReply:
     """带工具调用的一轮回复。"""
     content: str
     tool_calls: list[dict[str, Any]]
+    finish_reason: str = ""
 
 
 async def chat_with_tools(

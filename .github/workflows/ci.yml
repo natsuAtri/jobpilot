@@ -37,6 +37,8 @@ jobs:
         run: python tools/eval_intent.py
       - name: Agent 路由 / 工具循环 / 澄清 / 检查点
         run: python tools/smoke_agent.py
+      - name: Agent 夹具回放
+        run: python tools/smoke_agent_replay.py
       - name: 双 agent 生成
         env:
           RA_LLM_STUB: "1"

@@ -105,7 +105,6 @@ def build_stubs() -> list[str]:
     from app.agent.tools import TOOL_INTENT, ToolResult
 
     calls: list[str] = []
-    original = chat._run_tool
 
     def fake_run_tool(name, args, state, resume_id, utterance=""):
         calls.append(name)

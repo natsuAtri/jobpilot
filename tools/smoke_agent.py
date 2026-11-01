@@ -939,6 +939,26 @@ def test_stub_text(resume_id: int) -> None:
     check("替身模式有人话提示", "替身模型" in out["reply"], out["reply"][:60])
 
 
+
+def test_tool_registry() -> None:
+    """声明、意图、处理器三者必须一一对应，缺一个要在启动时炸掉。"""
+    from app.agent import tools as tools_mod
+
+    check("注册表自洽", tools_mod.validate() == [], str(tools_mod.validate()))
+    check("每个工具都绑定了 handler",
+          all(tool.handler is not None for tool in tools_mod.REGISTRY.values()))
+    check("TOOLS 与注册表一一对应",
+          {s["function"]["name"] for s in tools_mod.TOOLS} == set(tools_mod.REGISTRY),
+          str(set(tools_mod.REGISTRY)))
+
+    try:
+        tools_mod.bind_all({"nonexistent_tool": lambda *a: None})
+        rejected = False
+    except KeyError:
+        rejected = True
+    check("绑定未声明的工具会被拒绝", rejected)
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -972,6 +992,7 @@ def main() -> int:
     test_client_robustness(resume_id)
     test_retry_policy(resume_id)
     test_stub_text(resume_id)
+    test_tool_registry()
     test_trace()
 
     if failures:

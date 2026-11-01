@@ -11,10 +11,17 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+# 工具注册表必须自洽：少绑一个 handler，模型调用时会静默变成「未知工具」。
+# 宁可起不来，也不要带着半张表上线。
+from .agent import tools as _agent_tools  # noqa: E402
 from .config import STATIC_DIR, ensure_dirs
 from .db import migrate
 from .routes import apply, chat, dialogue, generate, jobs, pages, personal, resumes
 from .templating import ASSET_VERSION
+
+_registry_problems = _agent_tools.validate()
+if _registry_problems:
+    raise RuntimeError("Agent 工具注册表不完整：" + "；".join(_registry_problems))
 
 
 def _warmup_models() -> None:

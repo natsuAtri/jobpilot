@@ -26,6 +26,7 @@ from . import goal as goal_mod
 from . import intent as intent_mod
 from . import judge as judge_mod
 from . import plan as plan_mod
+from . import tools as tools_mod
 from . import verify as verify_mod
 from .tools import ToolResult
 
@@ -294,115 +295,135 @@ def _cand_brief(state: dict, cand: dict) -> dict:
     }
 
 
+def _search_data(state: dict, before: int, params: dict | None = None) -> dict:
+    candidates = state.get("candidates") or []
+    goal = state.get("goal") or {}
+    params = params or {}
+    return {
+        "candidates": [_cand_brief(state, c) for c in candidates[:20]],
+        "total": len(candidates),
+        "added": max(0, len(candidates) - before),
+        "keyword": goal.get("keyword") or params.get("keyword") or "",
+        "city": goal.get("city") or params.get("city") or "",
+        "note": state.get("last_search_note") or "",
+    }
+
+
+# ---------------------------------------------------------------- 工具处理器
+# 每个处理器只负责「执行 + 组装 data」，schema / intent / 绑定关系都在 tools.py。
+def _tool_search(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    before = len(state.get("candidates") or [])
+    params = {"keyword": args.get("keyword") or "", "city": args.get("city") or ""}
+    if args.get("min_score"):
+        params["min_score"] = int(args["min_score"])
+    if args.get("count"):
+        params["count"] = int(args["count"])
+    text = _do_search(state, params["keyword"], resume_id, params)
+    return ToolResult(True, "search", text, _search_data(state, before, params))
+
+
+def _tool_more(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    before = len(state.get("candidates") or [])
+    text = _do_more(state, resume_id, int(args.get("count") or 5))
+    return ToolResult(True, "more", text, _search_data(state, before))
+
+
+def _tool_exclude(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    words = args.get("words") or ""
+    text = _do_exclude(state, words)
+    candidates = state.get("candidates") or []
+    return ToolResult(True, "exclude", text, {
+        "excluded": [w for w in words.split() if w],
+        "remaining": len(candidates),
+        "candidates": [_cand_brief(state, c) for c in candidates[:20]],
+    })
+
+
+def _tool_detail(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
+    text, jobs = _ask_detail_many(state, idxs, utterance)
+    return ToolResult(True, "ask_detail", text, {"jobs": jobs})
+
+
+def _tool_judge(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
+    text, judgments = _judge_many(state, idxs, utterance, resume_id)
+    return ToolResult(True, "judge", text, {"judgments": judgments})
+
+
+def _tool_list(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    candidates = state.get("candidates") or []
+    return ToolResult(True, "status", _do_status(state), {
+        "total": len(candidates),
+        "candidates": [_cand_brief(state, c) for c in candidates[:20]],
+    })
+
+
+def _tool_advice(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    text, suggestions = _advice_of(resume_id)
+    return ToolResult(True, "advice", text, {"suggestions": suggestions})
+
+
+def _tool_tailor(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    idxs = [int(i) for i in (args.get("indices") or []) if i]
+    if not idxs and args.get("index"):
+        idxs = [int(args["index"])]
+    candidates = state.get("candidates") or []
+    valid = [i for i in idxs if 1 <= i <= len(candidates)]
+    proposals = [
+        {"index": i, "cid": candidates[i - 1].get("cid"),
+         "title": candidates[i - 1].get("title") or ""}
+        for i in valid
+    ]
+    command = ("定制" + "和".join(str(i) for i in valid)) if valid else ""
+    return ToolResult(True, "tailor", _propose_tailor(state, idxs), {
+        "pending": True,
+        "proposals": proposals,
+        "confirm_command": command,
+    })
+
+
+def _tool_apply(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
+    idx = int(args.get("index") or 0) or None
+    cand = _resolve_candidate(state, idx, utterance)
+    text = _propose_apply(state, idx, utterance)
+    data: dict = {}
+    if cand is not None:
+        number = _index_of(state, cand)
+        data = {"pending": True, "index": number, "cid": cand.get("cid"),
+                "title": cand.get("title") or "", "confirm_command": f"投 {number}"}
+    return ToolResult(True, "apply", text, data)
+
+
+_TOOL_HANDLERS: dict[str, tools_mod.Handler] = {
+    "search_jobs": _tool_search,
+    "more_jobs": _tool_more,
+    "exclude_jobs": _tool_exclude,
+    "ask_job_detail": _tool_detail,
+    "judge_fit": _tool_judge,
+    "list_candidates": _tool_list,
+    "resume_advice": _tool_advice,
+    "tailor_resume": _tool_tailor,
+    "apply_job": _tool_apply,
+}
+
+# 声明与处理器在这里合流；少绑一个，validate() 会在启动时报错。
+tools_mod.bind_all(_TOOL_HANDLERS)
+
+
 def _run_tool(name: str, args: dict, state: dict, resume_id: int,
               utterance: str = "") -> ToolResult:
-    """执行一个工具，返回「给用户看的文案 + 给模型看的结构化数据」。
-
-    text 与改造前 _do_* 的返回值逐字一致（现有断言在查这些字符串）；
-    data 是观察渠道，不含 markdown 链接，可 JSON 序列化。
-    """
-    from .tools import TOOL_INTENT
-
-    intent = TOOL_INTENT.get(name, "chat")
+    """按注册表分发。text 给用户看，data 给模型看。"""
+    tool = tools_mod.get(name)
+    if tool is None or tool.handler is None:
+        return ToolResult(False, "chat", f"（未知工具：{name}）", {"error": "unknown_tool"})
     try:
-        if name in ("search_jobs", "more_jobs"):
-            before = len(state.get("candidates") or [])
-            if name == "search_jobs":
-                params = {"keyword": args.get("keyword") or "", "city": args.get("city") or ""}
-                if args.get("min_score"):
-                    params["min_score"] = int(args["min_score"])
-                if args.get("count"):
-                    params["count"] = int(args["count"])
-                text = _do_search(state, params["keyword"], resume_id, params)
-            else:
-                text = _do_more(state, resume_id, int(args.get("count") or 5))
-            candidates = state.get("candidates") or []
-            goal = state.get("goal") or {}
-            return ToolResult(True, intent, text, {
-                "candidates": [_cand_brief(state, c) for c in candidates[:20]],
-                "total": len(candidates),
-                "added": max(0, len(candidates) - before),
-                "keyword": goal.get("keyword") or "",
-                "city": goal.get("city") or "",
-                "note": state.get("last_search_note") or "",
-            })
-
-        if name == "exclude_jobs":
-            words = args.get("words") or ""
-            text = _do_exclude(state, words)
-            candidates = state.get("candidates") or []
-            return ToolResult(True, "exclude", text, {
-                "excluded": [w for w in words.split() if w],
-                "remaining": len(candidates),
-                "candidates": [_cand_brief(state, c) for c in candidates[:20]],
-            })
-
-        if name == "ask_job_detail":
-            idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
-            text, jobs = _ask_detail_many(state, idxs, utterance)
-            return ToolResult(True, "ask_detail", text, {"jobs": jobs})
-
-        if name == "judge_fit":
-            idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
-            text, judgments = _judge_many(state, idxs, utterance, resume_id)
-            return ToolResult(True, "judge", text, {"judgments": judgments})
-
-        if name == "list_candidates":
-            candidates = state.get("candidates") or []
-            return ToolResult(True, "status", _do_status(state), {
-                "total": len(candidates),
-                "candidates": [_cand_brief(state, c) for c in candidates[:20]],
-            })
-
-        if name == "resume_advice":
-            text, suggestions = _advice_of(resume_id)
-            return ToolResult(True, "advice", text, {"suggestions": suggestions})
-
-        if name == "tailor_resume":
-            idxs = [int(i) for i in (args.get("indices") or []) if i]
-            if not idxs and args.get("index"):
-                idxs = [int(args["index"])]
-            candidates = state.get("candidates") or []
-            valid = [i for i in idxs if 1 <= i <= len(candidates)]
-            proposals = [
-                {"index": i, "cid": candidates[i - 1].get("cid"),
-                 "title": candidates[i - 1].get("title") or ""}
-                for i in valid
-            ]
-            command = ("定制" + "和".join(str(i) for i in valid)) if valid else ""
-            return ToolResult(True, "tailor", _propose_tailor(state, idxs), {
-                "pending": True,
-                "proposals": proposals,
-                "confirm_command": command,
-            })
-
-        if name == "record_application":
-            idxs = [int(i) for i in (args.get("indices") or []) if i]
-            if not idxs and args.get("index"):
-                idxs = [int(args["index"])]
-            note = args.get("note") or ""
-            if len(idxs) > 1:
-                text = "\n\n".join(_do_record_application(state, i, note) for i in idxs)
-            else:
-                text = _do_record_application(state, idxs[0] if idxs else None, note)
-            return ToolResult(True, "apply", text,
-                      {"recorded": True, "index": idxs[0] if idxs else None})
-
-        if name == "apply_job":
-            idx = int(args.get("index") or 0) or None
-            cand = _resolve_candidate(state, idx, utterance)
-            text = _propose_apply(state, idx, utterance)
-            data: dict = {}
-            if cand is not None:
-                number = _index_of(state, cand)
-                data = {"pending": True, "index": number, "cid": cand.get("cid"),
-                        "title": cand.get("title") or "", "confirm_command": f"投 {number}"}
-            return ToolResult(True, "apply", text, data)
+        return tool.handler(args, state, resume_id, utterance)
     except Exception as exc:  # noqa: BLE001 - 工具失败也要回话
         trace.record("error", name, args=args, result={"error": str(exc)})
-        return ToolResult(False, intent, f"这个操作没成功（{type(exc).__name__}：{exc}）。",
-                  {"error": f"{type(exc).__name__}: {exc}"})
-    return ToolResult(False, intent, f"（未知工具：{name}）", {"error": "unknown_tool"})
+        return ToolResult(False, tool.intent,
+                          f"这个操作没成功（{type(exc).__name__}：{exc}）。",
+                          {"error": f"{type(exc).__name__}: {exc}"})
 
 
 def _propose_tailor(state: dict, indices: list[int]) -> str:

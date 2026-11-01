@@ -279,6 +279,12 @@ def test_verify(resume_id: int) -> None:
     check("编造分数会被抓", bool(verify.check_reply("第 1 个 88.8 分", state)))
     check("越界序号会被抓", bool(verify.check_reply("第 5 个也不错", state)))
     check("0 分是允许的", verify.check_reply("匹配 0 分说明不相关", state) == [])
+    check("声称已记录但没动作会报",
+          bool(verify.check_reply("已记录第 1 个", {"performed": []})))
+    check("有对应动作就不报",
+          verify.check_reply("已记录第 1 个", {"performed": [{"action": "record"}]}) == [])
+    check("声称已打开但没动作会报",
+          bool(verify.check_reply("已在你的登录态浏览器里打开岗位页", {"performed": []})))
 
     # 集成：工具返回了不一致的内容，trace 里应出现 verify 记录
     cid = conv.get_active()

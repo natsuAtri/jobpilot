@@ -16,6 +16,12 @@ from __future__ import annotations
 import re
 
 SCORE_RE = re.compile(r"(\d{1,3}(?:\.\d)?)\s*分")
+# 回复声称「已做过某事」时，这一轮必须真有对应动作
+_CLAIMS = (
+    (re.compile(r"已记录|已标记为已投递"), "record"),
+    (re.compile(r"提交定制任务|开始为.*生成定制简历"), "tailor"),
+    (re.compile(r"已在你的登录态浏览器里打开"), "apply_open"),
+)
 INDEX_RE = re.compile(r"第\s*([一二三四五六七八九十\d]{1,3})\s*个")
 CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
@@ -48,7 +54,13 @@ def check_reply(reply: str, state: dict) -> list[str]:
         if value not in known and not any(abs(value - k) < 0.05 for k in known):
             issues.append(f"回复里的「{raw} 分」不在候选分数里")
 
-    # 2) 「第 N 个」不能越界
+    # 2) 声称的动作必须真的发生过
+    performed = {item.get("action") for item in (state.get("performed") or [])}
+    for pattern, action in _CLAIMS:
+        if pattern.search(text) and action not in performed:
+            issues.append(f"回复声称「{action}」，但这一轮没有对应动作")
+
+    # 3) 「第 N 个」不能越界
     for raw in INDEX_RE.findall(text):
         try:
             index = int(raw)

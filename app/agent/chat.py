@@ -118,6 +118,7 @@ def handle(conversation_id: int, text: str, resume_id: int) -> dict:
     state["resume_id"] = resume_id
     state.setdefault("cid_seq", 0)
     state.setdefault("last_cid", None)
+    state["performed"] = []
     _ensure_cids(state)
 
     intent = fast_intent(text)
@@ -231,6 +232,18 @@ def _history(conversation_id: int) -> list[dict]:
         if role in ("user", "assistant") and content:
             out.append({"role": role, "content": content[:300]})
     return out
+
+
+
+def _mark_performed(state: dict, action: str, *cids: str) -> None:
+    """有副作用的动作留痕，供 verify 判断「说的话有没有对应事实」。"""
+    from datetime import datetime
+
+    state.setdefault("performed", []).append({
+        "action": action,
+        "cids": [c for c in cids if c],
+        "at": datetime.now().isoformat(timespec="seconds"),
+    })
 
 
 def _cand_brief(state: dict, cand: dict) -> dict:
@@ -689,6 +702,7 @@ def _do_tailor(state: dict, index: int | None, resume_id: int, text: str = "") -
     from ..routes import generate as gen_route
 
     run_id = gen_route._start(job_id, resume_id)
+    _mark_performed(state, "tailor", cand.get("cid") or "")
 
     queue = state.setdefault("queue", [])
     if not any(q.get("job_id") == job_id for q in queue):
@@ -718,6 +732,7 @@ def _do_apply(state: dict, index: int | None, text: str = "") -> str:
         return "启动浏览器失败，检查浏览器配置。"
 
     state["last_apply_cid"] = cand.get("cid")
+    _mark_performed(state, "apply_open", cand.get("cid") or "")
     return (
         f"已在你的登录态浏览器里打开「{cand['title']}」（{cand.get('company') or ''}）的岗位页。\n"
         f"请在窗口里完成投递（验证码/提交由你自己操作）。\n"
@@ -768,6 +783,7 @@ def _do_record_application(state: dict, index: int | None = None, note: str = ""
             job_id=job_id, resume_id=resume_id, channel="51job", notes=note)
         app_repo.record_submit(app_id, note)
 
+    _mark_performed(state, "record", cand.get("cid") or "")
     position = _index_of(state, cand)
     return (f"已记录：第 {position} 个「{cand['title']}」（{cand.get('company') or ''}）"
             f"标记为已投递。\n看全部投递：[投递记录](/applications)")

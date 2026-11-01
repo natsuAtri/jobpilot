@@ -302,7 +302,6 @@ async def chat_with_tools(
     if max_tokens:
         payload["max_tokens"] = max_tokens
 
-    endpoint_key = f"{provider.base_url}|{model}"
     headers = {"Content-Type": "application/json"}
     if provider.api_key:
         headers["Authorization"] = f"Bearer {provider.api_key}"

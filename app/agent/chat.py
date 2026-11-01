@@ -397,7 +397,7 @@ def _do_search(state: dict, text: str, resume_id: int, params: dict | None = Non
         "keyword": goal.keyword, "city": goal.city,
         "min_score": goal.min_score, "count": goal.count, "page": 1,
     }
-    return _search_and_store(state, resume_id, goal, note=note)
+    return _search_and_store(state, resume_id, goal, lead_note=note)
 
 
 def _do_more(state: dict, resume_id: int, count: int) -> str:
@@ -438,7 +438,7 @@ def _pick_fresh(jobs, goal, doc, seen: set, excluded: list[str], city: str) -> l
 
 
 def _search_and_store(state: dict, resume_id: int, goal, append: bool = False,
-                      note: str = "") -> str:
+                      lead_note: str = "") -> str:
     doc = resume_repo.load_doc(resume_id)
     if doc is None:
         return "没找到简历，先去「简历」页导入一份。"
@@ -457,15 +457,15 @@ def _search_and_store(state: dict, resume_id: int, goal, append: bool = False,
         attempts.append((words[0], ""))
 
     fresh: list[dict] = []
-    note = ""
+    relax_note = ""
     for keyword, city in attempts:
         jobs = search_51job(keyword, city_code=code_for(city), limit=200, pages=page)
         fresh = _pick_fresh(jobs, goal, doc, seen, excluded, city)
         if fresh:
             if city != goal.city:
-                note = f"（「{goal.city}」没搜到，已放宽到全国）"
+                relax_note = f"（「{goal.city}」没搜到，已放宽到全国）"
             elif keyword != goal.keyword:
-                note = f"（「{goal.keyword}」没搜到，已放宽到「{keyword}」）"
+                relax_note = f"（「{goal.keyword}」没搜到，已放宽到「{keyword}」）"
             break
 
     if not fresh:
@@ -499,7 +499,8 @@ def _search_and_store(state: dict, resume_id: int, goal, append: bool = False,
 
     threshold_note = f"≥{goal.min_score} 分" if goal.min_score else "按匹配分排序"
     head = (f"{('又' if append else '')}找到 {got} 个{'新的' if append else ''}岗位"
-            f"（关键词「{goal.keyword}」· 城市「{goal.city or '不限'}」· {threshold_note}）{note}：")
+            f"（关键词「{goal.keyword}」· 城市「{goal.city or '不限'}」· {threshold_note}）"
+            f"{lead_note}{relax_note}：")
     lines = [head]
     # 用户说「找 3 个」就只列 3 个，其余存着，别一屏糊 20 条
     shown = min(goal.count, len(state["candidates"]))

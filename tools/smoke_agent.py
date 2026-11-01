@@ -356,7 +356,25 @@ def test_resume_search(resume_id: int) -> None:
         chat.search_51job = original_search
 
     check("关键词来自简历而不是原句", "算法工程师" in reply and "我简历" not in reply, reply[:60])
-    check("只展示用户要的数量", reply.count("算法工程师") <= 4, reply[:120])
+    listed = [ln for ln in reply.splitlines() if ln[:1].isdigit()]
+    check("只展示用户要的数量", len(listed) <= 3, str(len(listed)))
+    check("按简历搜索会告知用户", "按你的简历" in reply, reply[:80])
+
+    # 放宽条件时，简历提示和放宽提示必须同时出现（不能互相挤掉）
+    def city_miss(keyword, city_code=None, limit=200, pages=1):
+        return [] if city_code == "010000" else [FakeJob(9)]
+
+    chat.search_51job = city_miss
+    chat.plan_mod.search_keywords = fake_keywords
+    try:
+        relaxed = chat._do_search(
+            {"candidates": [], "queue": [], "filters": {}, "goal": {}},
+            "找北京的和我简历匹配的岗位", resume_id, {})
+    finally:
+        chat.search_51job = original_search
+        chat.plan_mod.search_keywords = original_plan
+    check("放宽与简历提示同时出现",
+          "按你的简历" in relaxed and "放宽到全国" in relaxed, relaxed[:120])
     check("提示还有剩余", "还有" in reply, reply[-60:])
 
 

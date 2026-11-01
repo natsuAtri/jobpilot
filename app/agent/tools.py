@@ -5,9 +5,34 @@
 """
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any
 
 MAX_STEPS = 3
+
+
+@dataclass
+class ToolResult:
+    """一次工具调用的结果。
+
+    为什么要分 text 和 data：
+    - text 是给用户渲染的文案（带「回复「定制1」」这类引导、markdown 链接）
+    - data 是给模型看的结构化观察（纯数据，不含链接）
+    混在一起时，模型只能看到「下一步该说什么」，没有决策空间，
+    校验层也没法判断「它说已记录，到底记没记」。
+    """
+
+    ok: bool
+    intent: str
+    text: str
+    data: dict[str, Any]
+
+    def as_message(self) -> str:
+        """喂回模型的内容：只有观察，没有呈现。"""
+        return json.dumps({"ok": self.ok, "intent": self.intent, "data": self.data},
+                          ensure_ascii=False)
+
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -170,4 +195,6 @@ SYSTEM_PROMPT = """你是 JobPilot，一个本地求职 agent。你能调用工�
 5. 一次问多个岗位（如「第二个和第三个」）时，优先用 indices 参数一次调用。
 6. 回答用中文，简洁，可用「·」列点；不要输出 JSON 或工具名。
 7. 工具返回"还没有候选"时，引导用户先搜索岗位。
-8. 如果用户的问题和找工作无关，直接回答，不要硬套工具。"""
+8. 如果用户的问题和找工作无关，直接回答，不要硬套工具。
+9. 工具返回的是结构化数据（JSON），不是让你转述的文案。请据此组织回答，
+   不要复述工具里的字段名或 JSON 片段。"""

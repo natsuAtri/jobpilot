@@ -589,6 +589,58 @@ def test_tailor_idempotent(resume_id: int) -> None:
         gen_route._inflight.clear()
 
 
+
+def test_tool_result_shape(resume_id: int) -> None:
+    """工具必须返回「结构化观察 + 呈现文案」两套，观察里不能带 markdown 链接。"""
+    import json as _json
+
+    from app.agent.tools import ToolResult
+
+    class FakeJob:
+        def __init__(self, i: int):
+            self.source_id, self.title, self.company = str(i), f"岗位{i}", "X"
+            self.location, self.url, self.description = "北京", "u", "要求 Python"
+            self.experience, self.salary, self.education = "1-3年", "20-30K", "本科"
+
+        def as_dict(self):
+            return {"source_id": self.source_id, "title": self.title, "company": self.company,
+                    "location": self.location, "url": self.url, "description": self.description,
+                    "experience": self.experience, "education": self.education}
+
+    original = chat.search_51job
+    chat.search_51job = lambda *a, **k: [FakeJob(i) for i in range(1, 4)]
+    try:
+        state = {"candidates": [], "queue": [], "filters": {}, "goal": {},
+                 "resume_id": resume_id}
+        result = chat._run_tool("search_jobs", {"keyword": "AI"}, state, resume_id, "")
+    finally:
+        chat.search_51job = original
+
+    check("返回 ToolResult", isinstance(result, ToolResult), type(result).__name__)
+    check("有呈现文案", isinstance(result.text, str) and bool(result.text), result.text[:40])
+    cands = result.data.get("candidates") or []
+    check("观察里有候选列表", bool(cands), str(result.data)[:60])
+    if cands:
+        first = cands[0]
+        check("候选含 index/cid/title/score",
+              {"index", "cid", "title", "score"} <= set(first), str(first))
+    try:
+        _json.dumps(result.data, ensure_ascii=False)
+        serializable = True
+    except TypeError:
+        serializable = False
+    check("观察可 JSON 序列化", serializable)
+
+    detail_state = {"candidates": [
+        {"cid": "c1", "title": "岗位一", "company": "A", "location": "北京", "score": 60,
+         "url": "https://example.com/1", "description": "岗位职责：写代码。任职要求：Python。"}],
+        "queue": [], "filters": {}, "goal": {}}
+    detail = chat._run_tool("ask_job_detail", {"index": 1}, detail_state, resume_id, "")
+    jobs = detail.data.get("jobs") or []
+    check("详情带不可信标记", bool(jobs) and "sections_untrusted" in jobs[0], str(jobs)[:60])
+    check("观察里没有 markdown 链接", "](/" not in detail.as_message(), detail.as_message()[:80])
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -615,6 +667,7 @@ def main() -> int:
     test_candidate_identity(resume_id)
     test_agent_pronoun(resume_id)
     test_tailor_idempotent(resume_id)
+    test_tool_result_shape(resume_id)
     test_trace()
 
     if failures:

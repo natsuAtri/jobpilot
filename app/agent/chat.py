@@ -24,6 +24,7 @@ from . import intent as intent_mod
 from . import judge as judge_mod
 from . import plan as plan_mod
 from . import verify as verify_mod
+from .tools import ToolResult
 
 MAX_CANDIDATES = 30
 
@@ -232,59 +233,127 @@ def _history(conversation_id: int) -> list[dict]:
     return out
 
 
-def _run_tool(name: str, args: dict, state: dict, resume_id: int,
-              utterance: str = "") -> tuple[str, str]:
-    """执行一个工具，返回（给用户看的文本, 意图名）。
+def _cand_brief(state: dict, cand: dict) -> dict:
+    """给模型看的候选摘要（不含链接与文案）。"""
+    return {
+        "index": _index_of(state, cand),
+        "cid": cand.get("cid"),
+        "title": cand.get("title") or "",
+        "company": cand.get("company") or "",
+        "location": cand.get("location") or "",
+        "score": cand.get("score"),
+    }
 
-    用户原话必须透传下去：「这个」「那个」这类指代，以及问的是薪资还是 JD，
-    都只能从原话判断 —— 传空会静默退化成「第 1 个」或整段 JD。
+
+def _run_tool(name: str, args: dict, state: dict, resume_id: int,
+              utterance: str = "") -> ToolResult:
+    """执行一个工具，返回「给用户看的文案 + 给模型看的结构化数据」。
+
+    text 与改造前 _do_* 的返回值逐字一致（现有断言在查这些字符串）；
+    data 是观察渠道，不含 markdown 链接，可 JSON 序列化。
     """
     from .tools import TOOL_INTENT
 
+    intent = TOOL_INTENT.get(name, "chat")
     try:
-        if name == "search_jobs":
-            params = {"keyword": args.get("keyword") or "", "city": args.get("city") or ""}
-            if args.get("min_score"):
-                params["min_score"] = int(args["min_score"])
-            if args.get("count"):
-                params["count"] = int(args["count"])
-            return _do_search(state, params["keyword"], resume_id, params), "search"
-        if name == "more_jobs":
-            return _do_more(state, resume_id, int(args.get("count") or 5)), "more"
+        if name in ("search_jobs", "more_jobs"):
+            before = len(state.get("candidates") or [])
+            if name == "search_jobs":
+                params = {"keyword": args.get("keyword") or "", "city": args.get("city") or ""}
+                if args.get("min_score"):
+                    params["min_score"] = int(args["min_score"])
+                if args.get("count"):
+                    params["count"] = int(args["count"])
+                text = _do_search(state, params["keyword"], resume_id, params)
+            else:
+                text = _do_more(state, resume_id, int(args.get("count") or 5))
+            candidates = state.get("candidates") or []
+            goal = state.get("goal") or {}
+            return ToolResult(True, intent, text, {
+                "candidates": [_cand_brief(state, c) for c in candidates[:20]],
+                "total": len(candidates),
+                "added": max(0, len(candidates) - before),
+                "keyword": goal.get("keyword") or "",
+                "city": goal.get("city") or "",
+                "note": state.get("last_search_note") or "",
+            })
+
         if name == "exclude_jobs":
-            return _do_exclude(state, args.get("words") or ""), "exclude"
+            words = args.get("words") or ""
+            text = _do_exclude(state, words)
+            candidates = state.get("candidates") or []
+            return ToolResult(True, "exclude", text, {
+                "excluded": [w for w in words.split() if w],
+                "remaining": len(candidates),
+                "candidates": [_cand_brief(state, c) for c in candidates[:20]],
+            })
+
         if name == "ask_job_detail":
             idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
-            return _do_ask_detail_multi(state, idxs, utterance), "ask_detail"
+            text, jobs = _ask_detail_many(state, idxs, utterance)
+            return ToolResult(True, "ask_detail", text, {"jobs": jobs})
+
         if name == "judge_fit":
             idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
-            return _do_judge_multi(state, idxs, utterance, resume_id), "judge"
+            text, judgments = _judge_many(state, idxs, utterance, resume_id)
+            return ToolResult(True, "judge", text, {"judgments": judgments})
+
         if name == "list_candidates":
-            return _do_status(state), "status"
+            candidates = state.get("candidates") or []
+            return ToolResult(True, "status", _do_status(state), {
+                "total": len(candidates),
+                "candidates": [_cand_brief(state, c) for c in candidates[:20]],
+            })
+
         if name == "resume_advice":
-            return _do_advice(resume_id), "advice"
+            text, suggestions = _advice_of(resume_id)
+            return ToolResult(True, "advice", text, {"suggestions": suggestions})
+
         if name == "tailor_resume":
             idxs = [int(i) for i in (args.get("indices") or []) if i]
             if not idxs and args.get("index"):
                 idxs = [int(args["index"])]
-            return _propose_tailor(state, idxs), "tailor"
+            candidates = state.get("candidates") or []
+            valid = [i for i in idxs if 1 <= i <= len(candidates)]
+            proposals = [
+                {"index": i, "cid": candidates[i - 1].get("cid"),
+                 "title": candidates[i - 1].get("title") or ""}
+                for i in valid
+            ]
+            command = ("定制" + "和".join(str(i) for i in valid)) if valid else ""
+            return ToolResult(True, "tailor", _propose_tailor(state, idxs), {
+                "pending": True,
+                "proposals": proposals,
+                "confirm_command": command,
+            })
+
         if name == "record_application":
             idxs = [int(i) for i in (args.get("indices") or []) if i]
             if not idxs and args.get("index"):
                 idxs = [int(args["index"])]
+            note = args.get("note") or ""
             if len(idxs) > 1:
-                return "\n\n".join(
-                    _do_record_application(state, i, args.get("note") or "") for i in idxs), "apply"
-            return _do_record_application(
-                state, idxs[0] if idxs else None, args.get("note") or ""), "apply"
+                text = "\n\n".join(_do_record_application(state, i, note) for i in idxs)
+            else:
+                text = _do_record_application(state, idxs[0] if idxs else None, note)
+            return ToolResult(True, "apply", text,
+                      {"recorded": True, "index": idxs[0] if idxs else None})
+
         if name == "apply_job":
-            return _propose_apply(state,
-                                 int(args.get("index") or 0) or None,
-                                 utterance), "apply"
+            idx = int(args.get("index") or 0) or None
+            cand = _resolve_candidate(state, idx, utterance)
+            text = _propose_apply(state, idx, utterance)
+            data: dict = {}
+            if cand is not None:
+                number = _index_of(state, cand)
+                data = {"pending": True, "index": number, "cid": cand.get("cid"),
+                        "title": cand.get("title") or "", "confirm_command": f"投 {number}"}
+            return ToolResult(True, "apply", text, data)
     except Exception as exc:  # noqa: BLE001 - 工具失败也要回话
         trace.record("error", name, args=args, result={"error": str(exc)})
-        return f"这个操作没成功（{type(exc).__name__}：{exc}）。", TOOL_INTENT.get(name, "chat")
-    return f"（未知工具：{name}）", TOOL_INTENT.get(name, "chat")
+        return ToolResult(False, intent, f"这个操作没成功（{type(exc).__name__}：{exc}）。",
+                  {"error": f"{type(exc).__name__}: {exc}"})
+    return ToolResult(False, intent, f"（未知工具：{name}）", {"error": "unknown_tool"})
 
 
 def _propose_tailor(state: dict, indices: list[int]) -> str:
@@ -355,13 +424,15 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
             except json.JSONDecodeError:
                 args = {}
             # 工具内部会 asyncio.run（judge / 关键词规划），放到线程里跑避免嵌套事件循环
-            out, intent_name = await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 _run_tool, name, args, state, resume_id, text)
-            used.append(intent_name)
-            produced.append(out)
-            trace.record("tool", name, args=args, result={"chars": len(out)})
-            messages.append({"role": "tool", "tool_call_id": call.get("id", ""),
-                             "content": out[:3000]})
+            used.append(result.intent)
+            produced.append(result.text)
+            trace.record("tool", name, args=args,
+                         result={"ok": result.ok, "chars": len(result.text)})
+            messages.append({"role": "tool",
+                             "tool_call_id": call.get("id") or f"call_{len(used)}",
+                             "content": result.as_message()[:4000]})
 
     if produced:
         return "\n\n".join(produced), (used[0] if used else "chat")
@@ -507,6 +578,7 @@ def _search_and_store(state: dict, resume_id: int, goal, append: bool = False,
     lines.extend(_list_candidates(state["candidates"], limit=shown, note=False))
     if len(state["candidates"]) > shown:
         lines.append(f"（还有 {len(state['candidates']) - shown} 个，说「再找几个」继续看）")
+    state["last_search_note"] = f"{lead_note}{relax_note}"
     lines.append("要针对哪个岗位「定制简历」？说「定制第 N 个」或「定制 1」。")
     return "\n".join(lines)
 
@@ -701,14 +773,38 @@ def _do_record_application(state: dict, index: int | None = None, note: str = ""
             f"标记为已投递。\n看全部投递：[投递记录](/applications)")
 
 
-def _do_ask_detail(state: dict, index: int | None, text: str) -> str:
-    """回答「第 N 个的具体要求/公司/薪资」这类问题。"""
+def _job_data(state: dict, cand: dict) -> dict:
+    """给模型看的岗位数据。JD 正文是网页抓取原文，键名带 _untrusted 标记。"""
+    description = cand.get("description") or ""
+    sections = []
+    for title, body in _split_jd_sections(description):
+        body = (body or "").strip()
+        if body:
+            sections.append({"title": title or "岗位描述", "text": body[:500]})
+    return {
+        "index": _index_of(state, cand),
+        "cid": cand.get("cid"),
+        "title": cand["title"],
+        "company": cand.get("company") or "",
+        "salary": cand.get("salary") or "",
+        "location": cand.get("location") or "",
+        "experience": cand.get("experience") or "",
+        "education": cand.get("education") or "",
+        "score": cand.get("score"),
+        "url": cand.get("url") or "",
+        "sections_untrusted": sections,
+    }
+
+
+def _ask_detail_of(state: dict, index: int | None, text: str) -> tuple[str, dict | None]:
+    """返回（给用户看的文本, 给模型看的岗位数据）。"""
     import re as _re
 
     cand = _resolve_candidate(state, index, text)
     if cand is None:
-        return _clarify_candidate(state, index)
+        return _clarify_candidate(state, index), None
 
+    data = _job_data(state, cand)
     asks_attr = _re.search(r"(公司|薪资|工资|地点|在哪|经验|学历|匹配)", text)
     asks_jd = _re.search(r"(要求|需求|职责|干什么|做什么|详情|介绍|内容|是什么|怎么样)", text)
 
@@ -721,11 +817,11 @@ def _do_ask_detail(state: dict, index: int | None, text: str) -> str:
             f"经验：{cand.get('experience') or '未填'}\n"
             f"学历：{cand.get('education') or '未填'}\n"
             f"匹配：{cand.get('score')} 分"
-        )
+        ), data
 
     description = cand.get("description") or ""
     if not description.strip():
-        return f"「{cand['title']}」没抓到 JD 正文，只能看到列表信息。"
+        return f"「{cand['title']}」没抓到 JD 正文，只能看到列表信息。", data
 
     lines = [f"「{cand['title']}」（{cand.get('company') or ''}·{cand.get('location') or ''}）"]
     for title, body in _split_jd_sections(description):
@@ -737,33 +833,61 @@ def _do_ask_detail(state: dict, index: int | None, text: str) -> str:
     if len(lines) == 1:
         lines.append(description[:500])
     lines.append(f"来源：[岗位详情]({cand.get('url') or '#'})")
-    return "\n".join(lines)
+    return "\n".join(lines), data
 
+
+def _do_ask_detail(state: dict, index: int | None, text: str) -> str:
+    return _ask_detail_of(state, index, text)[0]
+
+
+
+def _judge_many(state: dict, idxs: list[int], text: str,
+                resume_id: int) -> tuple[str, list[dict]]:
+    """一次问多个岗位（「第二个和第三个适合我吗」）。"""
+    if not idxs:
+        one_text, one_data = _judge_of(state, None, text, resume_id)
+        return one_text, ([one_data] if one_data else [])
+    parts: list[str] = []
+    data: list[dict] = []
+    for idx in idxs[:3]:
+        one_text, one_data = _judge_of(state, idx, text, resume_id)
+        parts.append(one_text)
+        if one_data:
+            data.append(one_data)
+    return "\n\n".join(parts), data
 
 
 def _do_judge_multi(state: dict, idxs: list[int], text: str, resume_id: int) -> str:
-    """一次问多个岗位（「第二个和第三个适合我吗」）。"""
+    return _judge_many(state, idxs, text, resume_id)[0]
+
+
+def _ask_detail_many(state: dict, idxs: list[int], text: str) -> tuple[str, list[dict]]:
     if not idxs:
-        return _do_judge(state, None, text, resume_id)
-    parts = [_do_judge(state, idx, text, resume_id) for idx in idxs[:3]]
-    return "\n\n".join(parts)
+        one_text, one_data = _ask_detail_of(state, None, text)
+        return one_text, ([one_data] if one_data else [])
+    parts: list[str] = []
+    data: list[dict] = []
+    for idx in idxs[:3]:
+        one_text, one_data = _ask_detail_of(state, idx, text)
+        parts.append(one_text)
+        if one_data:
+            data.append(one_data)
+    return "\n\n".join(parts), data
 
 
 def _do_ask_detail_multi(state: dict, idxs: list[int], text: str) -> str:
-    if not idxs:
-        return _do_ask_detail(state, None, text)
-    parts = [_do_ask_detail(state, idx, text) for idx in idxs[:3]]
-    return "\n\n".join(parts)
+    return _ask_detail_many(state, idxs, text)[0]
 
 
-def _do_judge(state: dict, index: int | None, text: str, resume_id: int) -> str:
-    """「这个岗位适合我吗」——LLM 判断适配度。"""
+def _judge_of(state: dict, index: int | None, text: str,
+              resume_id: int) -> tuple[str, dict | None]:
+    """返回（给用户看的文本, 判断结果数据）。"""
     cand = _resolve_candidate(state, index, text)
     if cand is None:
-        return _clarify_candidate(state, index)
+        return _clarify_candidate(state, index), None
     doc = resume_repo.load_doc(resume_id)
     if doc is None:
-        return "没找到简历。"
+        return "没找到简历。", None
 
     position = _index_of(state, cand)
 
@@ -775,7 +899,7 @@ def _do_judge(state: dict, index: int | None, text: str, resume_id: int) -> str:
             f"判断服务这次没成功（{detail}）。\n"
             f"先看客观数据：匹配 {cand.get('score')} 分。\n"
             f"可以过一会儿再说「第 {position} 个适合我吗」重试。"
-        )
+        ), None
 
     lines = [f"第 {position} 个「{cand['title']}」——{result['verdict']}（匹配 {cand.get('score')} 分）"]
     if result["summary"]:
@@ -786,22 +910,37 @@ def _do_judge(state: dict, index: int | None, text: str, resume_id: int) -> str:
         lines.append("· 差距：" + "；".join(result["risks"]))
     if result["suggestion"]:
         lines.append("· 建议：" + result["suggestion"])
-    return "\n".join(lines)
+    data = {
+        "index": position,
+        "cid": cand.get("cid"),
+        "title": cand["title"],
+        "verdict": result["verdict"],
+        "summary": result["summary"],
+        "reasons": result["reasons"],
+        "risks": result["risks"],
+        "suggestion": result["suggestion"],
+        "score": cand.get("score"),
+    }
+    return "\n".join(lines), data
 
 
-def _do_advice(resume_id: int) -> str:
-    """「我的简历该补什么」——针对简历本身，不绑定岗位。"""
+def _do_judge(state: dict, index: int | None, text: str, resume_id: int) -> str:
+    return _judge_of(state, index, text, resume_id)[0]
+
+
+def _advice_of(resume_id: int) -> tuple[str, list[dict]]:
+    """返回（给用户看的文本, 建议列表）。"""
     doc = resume_repo.load_doc(resume_id)
     if doc is None:
-        return "没找到简历，先去「简历」页导入一份。"
+        return "没找到简历，先去「简历」页导入一份。", []
     from ..generate import suggest as suggest_mod
 
     try:
         items = asyncio.run(suggest_mod.general_review(doc))
     except Exception as exc:  # noqa: BLE001 - 建议失败要能回话
-        return f"没能生成建议（{str(exc)[:80]}），过会儿再试。"
+        return f"没能生成建议（{str(exc)[:80]}），过会儿再试。", []
     if not items:
-        return "这次没生成建议（模型调用失败），过会儿再说一次「我的简历需要补充什么」。"
+        return "这次没生成建议（模型调用失败），过会儿再说一次「我的简历需要补充什么」。", []
 
     lines = ["针对你简历本身，可以补这些（只在你确实做过时补）："]
     for i, s in enumerate(items, 1):
@@ -811,7 +950,14 @@ def _do_advice(resume_id: int) -> str:
         if s.get("how"):
             lines.append(f"   怎么写：{s['how']}")
     lines.append("想看针对某个岗位的建议，先「找 xxx 岗位」，再「定制第 N 个」。")
-    return "\n".join(lines)
+    return "\n".join(lines), [
+        {"title": s["title"], "why": s.get("why") or "", "how": s.get("how") or ""}
+        for s in items
+    ]
+
+
+def _do_advice(resume_id: int) -> str:
+    return _advice_of(resume_id)[0]
 
 
 def _do_status(state: dict) -> str:

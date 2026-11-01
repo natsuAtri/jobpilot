@@ -959,6 +959,45 @@ def test_tool_registry() -> None:
     check("绑定未声明的工具会被拒绝", rejected)
 
 
+
+def test_state_lock(resume_id: int) -> None:
+    """同一会话的两条消息不能并行处理——否则后写的会把先写的状态冲掉。"""
+    import threading
+    import time as _time
+
+    cid = conv.get_active()
+    events: list[str] = []
+
+    def slow_locked(conversation_id, text, resume_id_):
+        events.append("enter")
+        _time.sleep(0.3)
+        events.append("exit")
+        return {"reply": "ok", "intent": "chat", "suggestions": []}
+
+    original = chat._handle_locked
+    chat._handle_locked = slow_locked
+    try:
+        threads = [
+            threading.Thread(target=chat.handle, args=(cid, f"消息{i}", resume_id))
+            for i in range(2)
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=5)
+    finally:
+        chat._handle_locked = original
+
+    overlapped = any(
+        events[i] == "enter" and events[i + 1] == "enter"
+        for i in range(len(events) - 1)
+    )
+    check("同一会话串行执行", not overlapped, str(events))
+    check("两条消息都跑完了", events.count("exit") == 2, str(events))
+    check("同一会话拿到的是同一把锁",
+          chat._lock_for(cid) is chat._lock_for(cid))
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -993,6 +1032,7 @@ def main() -> int:
     test_retry_policy(resume_id)
     test_stub_text(resume_id)
     test_tool_registry()
+    test_state_lock(resume_id)
     test_trace()
 
     if failures:

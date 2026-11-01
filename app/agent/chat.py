@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -31,6 +32,20 @@ from . import verify as verify_mod
 from .tools import ToolResult
 
 MAX_CANDIDATES = 30
+
+# 同一个会话的 turn 必须串行：handle 是「读 state → 改 → 写回」，
+# 两条消息同时进来会互相覆盖（后写的把先写的候选整段冲掉）。
+_state_locks: dict[int, threading.Lock] = {}
+_state_locks_guard = threading.Lock()
+
+
+def _lock_for(conversation_id: int) -> threading.Lock:
+    with _state_locks_guard:
+        lock = _state_locks.get(conversation_id)
+        if lock is None:
+            lock = threading.Lock()
+            _state_locks[conversation_id] = lock
+        return lock
 
 
 @dataclass
@@ -138,7 +153,13 @@ def _list_candidates(candidates: list[dict], limit: int = 20, note: bool = True)
 
 
 def handle(conversation_id: int, text: str, resume_id: int) -> dict:
-    """一条用户消息 → 结果。agent 优先，精确指令走快路径，模型不可用时退回规则。"""
+    """一条用户消息 → 结果。同一会话串行执行，避免并发覆盖状态。"""
+    with _lock_for(conversation_id):
+        return _handle_locked(conversation_id, text, resume_id)
+
+
+def _handle_locked(conversation_id: int, text: str, resume_id: int) -> dict:
+    """真正的处理逻辑（调用方必须已持有该会话的锁）。"""
     trace.new_turn()
     state = conv.get_state(conversation_id)
     state.setdefault("candidates", [])

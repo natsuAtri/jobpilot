@@ -57,6 +57,11 @@ async def lifespan(app: FastAPI):
     if interrupted:
         print(f"[db] {interrupted} 个未完成的后台任务已标记中断")
     threading.Thread(target=_warmup_models, daemon=True).start()
+
+    # 观测/日志表不能无限长：启动时清一次老数据（后台，不拖慢启动）
+    from .repo import maintenance
+
+    threading.Thread(target=maintenance.prune_all, daemon=True).start()
     yield
 
 

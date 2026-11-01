@@ -1124,6 +1124,38 @@ def test_trace() -> None:
     check("trace 覆盖 intent/tool/result", {"intent", "tool", "result"} <= kinds, str(kinds))
 
 
+
+def test_prune() -> None:
+    """观测/日志表要有保留策略，不能无限长（放最后跑，会清表）。"""
+    from app.repo import maintenance
+
+    with get_conn() as conn:
+        conn.execute("DELETE FROM agent_trace")
+        for i in range(8):
+            conn.execute(
+                "INSERT INTO agent_trace(turn_id, step, kind, name, created_at) "
+                "VALUES (?, 0, 'tool', 'x', datetime('now','localtime','-10 days'))",
+                (f"old{i}",),
+            )
+        for i in range(8):
+            conn.execute(
+                "INSERT INTO agent_trace(turn_id, step, kind, name) VALUES (?, 0, 'tool', 'x')",
+                (f"new{i}",),
+            )
+
+    removed = maintenance.prune_agent_trace(keep_days=7, keep_rows=5)
+    with get_conn() as conn:
+        left = conn.execute("SELECT COUNT(*) n FROM agent_trace").fetchone()["n"]
+    check("过期 trace 被清掉", removed >= 8, str(removed))
+    check("按行数兜底到上限以内", left <= 5, str(left))
+
+    cid = conv.get_active()
+    for i in range(30):
+        conv.add_message(cid, "user", f"m{i}")
+    removed_msgs = maintenance.prune_messages(keep=10)
+    check("消息按会话裁剪", removed_msgs >= 20, str(removed_msgs))
+
+
 def main() -> int:
     resume_id = setup()
     test_intent()
@@ -1154,6 +1186,7 @@ def main() -> int:
     test_tool_timeout(resume_id)
     test_input_caps(resume_id)
     test_trace()
+    test_prune()
 
     if failures:
         print(f"\n失败 {len(failures)} 项：{', '.join(failures)}")

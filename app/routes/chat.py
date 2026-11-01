@@ -21,6 +21,7 @@ def _public_candidates(conversation_id: int) -> list[dict]:
     for index, item in enumerate(state.get("candidates") or [], start=1):
         out.append({
             "index": index,
+            "cid": item.get("cid"),
             "title": item.get("title") or "",
             "company": item.get("company") or "",
             "location": item.get("location") or "",

@@ -115,6 +115,9 @@ def handle(conversation_id: int, text: str, resume_id: int) -> dict:
     state.setdefault("filters", {})
     state.setdefault("goal", {})
     state["resume_id"] = resume_id
+    state.setdefault("cid_seq", 0)
+    state.setdefault("last_cid", None)
+    _ensure_cids(state)
 
     intent = fast_intent(text)
     if intent is not None:
@@ -298,7 +301,7 @@ def _propose_apply(state: dict, index: int | None) -> str:
     cand = _resolve_candidate(state, index, "")
     if cand is None:
         return _clarify_candidate(state, index)
-    number = index or state.get("last_index") or 1
+    number = _index_of(state, cand)
     return (f"要投递第 {number} 个「{cand['title']}」（{cand.get('company') or ''}）吗？\n"
             f"回复「投 {number}」，我会在你登录的浏览器里打开投递页。")
 
@@ -465,12 +468,30 @@ def _search_and_store(state: dict, resume_id: int, goal, append: bool = False,
         return (f"没找到「{goal.keyword}」相关岗位（城市：{goal.city or '不限'}），"
                 "放宽条件也没有结果。换个更宽的关键词试试，比如只写方向不写具体岗位名。")
 
-    combined = (state.get("candidates") or []) + fresh if append else fresh
-    combined.sort(key=lambda c: -c["score"])
-    state["candidates"] = combined[:MAX_CANDIDATES]
+    # 不变量：已经进列表的候选，位置永远不变；新候选只追加到末尾。
+    # 否则用户上一句说的「第 2 个」下一句就指向别的岗位了。
+    if append:
+        existing = state.get("candidates") or []
+        room = MAX_CANDIDATES - len(existing)
+        if room <= 0:
+            return (f"候选已经有 {MAX_CANDIDATES} 个了，先「排除」掉一些，"
+                    "或者换个关键词重新搜。")
+        fresh.sort(key=lambda c: -c["score"])
+        added = fresh[:room]
+        for item in added:
+            item["cid"] = _new_cid(state)
+        state["candidates"] = existing + added
+        got = len(added)
+    else:
+        fresh.sort(key=lambda c: -c["score"])
+        kept = fresh[:MAX_CANDIDATES]
+        for item in kept:
+            item["cid"] = _new_cid(state)
+        state["candidates"] = kept
+        got = len(kept)
 
     threshold_note = f"≥{goal.min_score} 分" if goal.min_score else "按匹配分排序"
-    head = (f"{('又' if append else '')}找到 {len(fresh)} 个{'新的' if append else ''}岗位"
+    head = (f"{('又' if append else '')}找到 {got} 个{'新的' if append else ''}岗位"
             f"（关键词「{goal.keyword}」· 城市「{goal.city or '不限'}」· {threshold_note}）{note}：")
     lines = [head]
     # 用户说「找 3 个」就只列 3 个，其余存着，别一屏糊 20 条
@@ -507,22 +528,50 @@ def _do_exclude(state: dict, words: str) -> str:
     return "\n".join(lines)
 
 
-def _resolve_candidate(state: dict, index: int | None, text: str = ""):
-    """解析「第 N 个 / 这个 / 它」。显式序号会记下来，供下次「这个」指代。"""
-    import re as _re
+_PRONOUN = re.compile(r"(这个|那个|它|刚才)")
 
+
+def _new_cid(state: dict) -> str:
+    """候选的稳定标识。用会话内递增序号，不依赖列表位置。"""
+    n = int(state.get("cid_seq") or 0) + 1
+    state["cid_seq"] = n
+    return f"c{n}"
+
+
+def _ensure_cids(state: dict) -> None:
+    """老会话里的候选没有 cid，进来先补上，保证「这个」能稳定指代。"""
+    for cand in state.get("candidates") or []:
+        if not cand.get("cid"):
+            cand["cid"] = _new_cid(state)
+
+
+def _index_of(state: dict, cand: dict | None) -> int:
+    """候选在**当前**列表里的显示序号；找不到返回 1。"""
+    if cand is None:
+        return 1
+    cid = cand.get("cid")
+    for i, item in enumerate(state.get("candidates") or [], start=1):
+        if (cid and item.get("cid") == cid) or item is cand:
+            return i
+    return 1
+
+
+def _resolve_candidate(state: dict, index: int | None, text: str = ""):
+    """解析「第 N 个 / 这个 / 它」。显式序号按 cid 记下来，供下次「这个」指代。"""
     candidates = state.get("candidates") or []
     if not candidates:
         return None
     if index is not None:
         if 1 <= index <= len(candidates):
-            state["last_index"] = index
-            return candidates[index - 1]
+            cand = candidates[index - 1]
+            state["last_cid"] = cand.get("cid")
+            return cand
         return None  # 显式序号越界 → 让调用方向用户澄清，别猜
-    if _re.search(r"(这个|那个|它|刚才)", text or ""):
-        last = state.get("last_index")
-        if last and 1 <= last <= len(candidates):
-            return candidates[last - 1]
+    if _PRONOUN.search(text or ""):
+        cid = state.get("last_cid")
+        cand = next((c for c in candidates if cid and c.get("cid") == cid), None)
+        if cand is not None:
+            return cand
     return candidates[0]
 
 
@@ -588,7 +637,7 @@ def _do_apply(state: dict, index: int | None, text: str = "") -> str:
     if not ok:
         return "启动浏览器失败，检查浏览器配置。"
 
-    state["last_apply_index"] = index or state.get("last_index") or 1
+    state["last_apply_cid"] = cand.get("cid")
     return (
         f"已在你的登录态浏览器里打开「{cand['title']}」（{cand.get('company') or ''}）的岗位页。\n"
         f"请在窗口里完成投递（验证码/提交由你自己操作）。\n"
@@ -600,8 +649,15 @@ def _do_record_application(state: dict, index: int | None = None, note: str = ""
     """把「已经投了」这件事记进投递表——不需要用户去别的页面点。"""
     from ..repo import applications as app_repo
 
-    index = index or state.get("last_apply_index") or state.get("last_index")
-    cand = _resolve_candidate(state, index, "")
+    candidates = state.get("candidates") or []
+    if index is not None:
+        cand = _resolve_candidate(state, index, "")
+    else:
+        cid = state.get("last_apply_cid")
+        cand = next((c for c in candidates if cid and c.get("cid") == cid), None)
+        if cand is None:
+            return ("还没打开过投递页，我不确定你投的是哪一个。\n"
+                    "先说「投第 N 个」打开岗位页，投完回来告诉我「投好了」。")
     if cand is None:
         return _clarify_candidate(state, index)
 
@@ -632,11 +688,7 @@ def _do_record_application(state: dict, index: int | None = None, note: str = ""
             job_id=job_id, resume_id=resume_id, channel="51job", notes=note)
         app_repo.record_submit(app_id, note)
 
-    position = 1
-    for i, item in enumerate(state.get("candidates") or [], start=1):
-        if item is cand or item.get("source_id") == cand.get("source_id"):
-            position = i
-            break
+    position = _index_of(state, cand)
     return (f"已记录：第 {position} 个「{cand['title']}」（{cand.get('company') or ''}）"
             f"标记为已投递。\n看全部投递：[投递记录](/applications)")
 
@@ -705,11 +757,7 @@ def _do_judge(state: dict, index: int | None, text: str, resume_id: int) -> str:
     if doc is None:
         return "没找到简历。"
 
-    position = 1
-    for i, item in enumerate(state.get("candidates") or [], start=1):
-        if item is cand or item.get("source_id") == cand.get("source_id"):
-            position = i
-            break
+    position = _index_of(state, cand)
 
     try:
         result = asyncio.run(judge_mod.judge(doc, cand.get("description") or ""))

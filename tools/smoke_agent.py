@@ -394,10 +394,15 @@ def test_apply_record(resume_id: int) -> None:
     """投递由 agent 记录，不需要用户去别的页面点。"""
     from app.repo import applications as app_repo
 
-    cands = [{"source_id": str(i), "title": f"岗位{i}", "company": "X", "location": "北京",
-              "score": 60, "url": "u", "description": "要求 Python"} for i in (1, 2)]
+    cands = [{"cid": f"c{i}", "source_id": str(i), "title": f"岗位{i}", "company": "X",
+              "location": "北京", "score": 60, "url": "u", "description": "要求 Python"}
+             for i in (1, 2)]
     state = {"candidates": cands, "queue": [], "filters": {}, "goal": {},
-             "resume_id": resume_id, "last_apply_index": 2}
+             "resume_id": resume_id, "last_apply_cid": "c2"}
+
+    # 没有打开过投递页时不该记账
+    gate = chat._do_record_application({"candidates": cands, "resume_id": resume_id}, None, "")
+    check("没打开过投递页不记账", "还没打开过投递页" in gate, gate[:40])
 
     out = chat._do_record_application(state, None, "手动投递")
     check("投递记录成功", "已记录" in out, out[:40])
@@ -425,6 +430,67 @@ def test_merged_proposal(resume_id: int) -> None:
     check("合并时列出两个岗位", merged.count("第 ") == 2, merged[:80])
 
 
+
+def test_candidate_identity(resume_id: int) -> None:
+    """候选的身份必须是 cid，不能是列表位置；追加不能让旧位置漂移。"""
+    class FakeJob:
+        def __init__(self, i: int, score: float):
+            self.source_id, self.title, self.company = str(i), f"岗位{i}", "X"
+            self.location, self.url, self.description = "北京", "u", "要求 Python"
+            self.experience, self.salary, self.education = "1-3年", "", "本科"
+
+        def as_dict(self):
+            return {"source_id": self.source_id, "title": self.title, "company": self.company,
+                    "location": self.location, "url": self.url, "description": self.description,
+                    "experience": self.experience, "education": self.education}
+
+    calls = {"n": 0}
+
+    def fake_search(keyword, city_code=None, limit=200, pages=1):
+        # 第二批分数更高——旧实现会把它们排到前面，导致「第 3 个」换人
+        calls["n"] += 1
+        base = calls["n"] * 10
+        return [FakeJob(base + i, 60 + base + i) for i in range(3)]
+
+    original = chat.search_51job
+    chat.search_51job = fake_search
+    try:
+        state = {"candidates": [], "queue": [], "filters": {}, "goal": {}, "resume_id": resume_id}
+        chat._do_search(state, "找 AI 岗位", resume_id, {"keyword": "AI"})
+        first = [(c.get("cid"), c["title"]) for c in state["candidates"]]
+        check("搜索后每个候选都有 cid", all(c[0] for c in first), str(first))
+
+        chat._do_more(state, resume_id, 3)
+        after = [(c.get("cid"), c["title"]) for c in state["candidates"]][:len(first)]
+        check("追加后旧候选位置不变", after == first, f"{after} != {first}")
+        check("追加后候选变多", len(state["candidates"]) > len(first),
+              str(len(state["candidates"])))
+
+        # 「这个」要跟着 cid 走，而不是跟着位置走
+        target = state["candidates"][2]
+        state["last_cid"] = target.get("cid")
+        other = state["candidates"][3]["title"].replace("岗位", "")
+        chat._do_exclude(state, other)
+        resolved = chat._resolve_candidate(state, None, "这个")
+        check("排除后「这个」仍指原来那个岗位",
+              resolved is not None and resolved["title"] == target["title"],
+              str(resolved["title"] if resolved else None))
+
+        # 满 30 个后追加：给明确提示，且列表不变
+        state["candidates"] = [
+            {"cid": f"c{i}", "title": f"岗位{i}", "company": "X", "source_id": str(i),
+             "score": 50, "location": "北京", "url": "u", "description": "d"}
+            for i in range(chat.MAX_CANDIDATES)
+        ]
+        state["cid_seq"] = chat.MAX_CANDIDATES
+        out = chat._do_more(state, resume_id, 3)
+        check("候选满 30 个时明确提示", "候选已经有" in out, out[:40])
+        check("满了不再增长", len(state["candidates"]) == chat.MAX_CANDIDATES,
+              str(len(state["candidates"])))
+    finally:
+        chat.search_51job = original
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -448,6 +514,7 @@ def main() -> int:
     test_multi_tailor(resume_id)
     test_apply_record(resume_id)
     test_merged_proposal(resume_id)
+    test_candidate_identity(resume_id)
     test_trace()
 
     if failures:

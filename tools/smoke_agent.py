@@ -1012,6 +1012,66 @@ def test_state_lock(resume_id: int) -> None:
           chat._lock_for(cid) is chat._lock_for(cid))
 
 
+
+def test_tool_timeout(resume_id: int) -> None:
+    """工具有执行上限；失败要能区分超时/异常/未知工具。"""
+    import time as _time
+
+    from app.agent import tools as tools_mod
+    from app.agent.tools import ToolResult
+
+    # 1) 超时
+    def slow_tool(name, args, state, rid, utterance=""):
+        _time.sleep(1.2)
+        return ToolResult(True, "status", "慢工具返回了", {})
+
+    original_run = chat._run_tool
+    original_timeout = tools_mod.TOOL_TIMEOUT
+    chat._run_tool = slow_tool
+    tools_mod.TOOL_TIMEOUT = 0.3
+
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": [], "queue": [], "filters": {}, "goal": {}})
+
+    async def always_call(task, messages, tools, **kw):
+        return client.ToolReply(content="", tool_calls=[{
+            "id": "c1", "type": "function",
+            "function": {"name": "list_candidates", "arguments": "{}"}}])
+
+    original_call = client.chat_with_tools
+    client.chat_with_tools = always_call
+    started = _time.time()
+    try:
+        out = chat.handle(cid, "我最近在考虑换工作，你觉得我该从哪下手", resume_id)
+    finally:
+        client.chat_with_tools = original_call
+        chat._run_tool = original_run
+        tools_mod.TOOL_TIMEOUT = original_timeout
+    elapsed = _time.time() - started
+    check("工具超时不会拖住整轮", elapsed < 3, f"{elapsed:.1f}s")
+    check("超时会告知用户", "超过" in out["reply"], out["reply"][:60])
+
+    # 2) 错误分类
+    class FailingTool:
+        intent = "status"
+
+        @staticmethod
+        def handler(*args):
+            raise RuntimeError("boom")
+
+    original_get = tools_mod.get
+    tools_mod.get = lambda name: FailingTool()
+    try:
+        failed = chat._run_tool("list_candidates", {}, {"candidates": []}, resume_id, "")
+    finally:
+        tools_mod.get = original_get
+    check("工具异常标 tool_error", failed.ok is False and failed.error_kind == "tool_error",
+          failed.error_kind)
+
+    unknown = chat._run_tool("no_such_tool", {}, {}, resume_id, "")
+    check("未知工具标 unknown", unknown.error_kind == "unknown", unknown.error_kind)
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -1047,6 +1107,7 @@ def main() -> int:
     test_stub_text(resume_id)
     test_tool_registry()
     test_state_lock(resume_id)
+    test_tool_timeout(resume_id)
     test_trace()
 
     if failures:

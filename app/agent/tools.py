@@ -46,11 +46,14 @@ class ToolResult:
     intent: str
     text: str
     data: dict[str, Any]
+    error_kind: str = ""  # timeout / tool_error / unknown，成功时为空
 
     def as_message(self) -> str:
         """喂回模型的内容：只有观察，没有呈现。"""
-        return json.dumps({"ok": self.ok, "intent": self.intent, "data": self.data},
-                          ensure_ascii=False)
+        payload: dict[str, Any] = {"ok": self.ok, "intent": self.intent, "data": self.data}
+        if self.error_kind:
+            payload["error_kind"] = self.error_kind
+        return json.dumps(payload, ensure_ascii=False)
 
 
 TOOLS: list[dict[str, Any]] = [

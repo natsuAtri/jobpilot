@@ -437,14 +437,16 @@ def _run_tool(name: str, args: dict, state: dict, resume_id: int,
     """按注册表分发。text 给用户看，data 给模型看。"""
     tool = tools_mod.get(name)
     if tool is None or tool.handler is None:
-        return ToolResult(False, "chat", f"（未知工具：{name}）", {"error": "unknown_tool"})
+        return ToolResult(False, "chat", f"（未知工具：{name}）",
+                          {"error": "unknown_tool"}, error_kind="unknown")
     try:
         return tool.handler(args, state, resume_id, utterance)
     except Exception as exc:  # noqa: BLE001 - 工具失败也要回话
         trace.record("error", name, args=args, result={"error": str(exc)})
         return ToolResult(False, tool.intent,
                           f"这个操作没成功（{type(exc).__name__}：{exc}）。",
-                          {"error": f"{type(exc).__name__}: {exc}"})
+                          {"error": f"{type(exc).__name__}: {exc}"},
+                          error_kind="tool_error")
 
 
 def _propose_tailor(state: dict, indices: list[int]) -> str:
@@ -539,12 +541,21 @@ async def _agent_loop(messages: list[dict], text: str, state: dict,
                 args = {}
             # 工具内部会 asyncio.run（judge / 关键词规划），放到线程里跑避免嵌套事件循环
             budget.tool_calls += 1
-            result = await asyncio.to_thread(
-                _run_tool, name, args, state, resume_id, text)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(_run_tool, name, args, state, resume_id, text),
+                    timeout=tools_mod.TOOL_TIMEOUT)
+            except (TimeoutError, asyncio.TimeoutError):
+                # 线程停不下来，但循环不能陪它一起等：跳过这个工具，继续往下
+                result = ToolResult(
+                    False, tools_mod.TOOL_INTENT.get(name, "chat"),
+                    f"「{name}」执行超过 {int(tools_mod.TOOL_TIMEOUT)} 秒，这次先跳过。",
+                    {"error": "timeout"}, error_kind="timeout")
             used.append(result.intent)
             produced.append(result.text)
             trace.record("tool", name, args=args,
-                         result={"ok": result.ok, "chars": len(result.text)})
+                         result={"ok": result.ok, "chars": len(result.text),
+                                 "error_kind": result.error_kind})
             messages.append({"role": "tool",
                              "tool_call_id": call.get("id") or f"call_{len(used)}",
                              "content": result.as_message()[:4000]})

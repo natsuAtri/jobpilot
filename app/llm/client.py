@@ -281,8 +281,9 @@ async def chat_with_tools(
     if os.environ.get("RA_LLM_STUB") == "1":
         from .stub import generic_stub
 
-        return ToolReply(content=json.dumps(generic_stub(task, list(messages)), ensure_ascii=False),
-                         tool_calls=[])
+        stub_reply = generic_stub(task, list(messages))
+        content = stub_reply.get("reply") if isinstance(stub_reply, dict) else None
+        return ToolReply(content=str(content or "（替身模型：该任务未实现）"), tool_calls=[])
 
     spec = get_task(task)
     try:

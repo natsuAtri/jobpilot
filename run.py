@@ -28,6 +28,16 @@ def _import_uvicorn():
         pass
 
     if _VENVLIB.is_dir():
+        # .venvlib 里的扩展模块是 cp312 编译的：别的 Python 版本混用会报
+        # 「cannot import name 'ArgsKwargs'」这类和真实原因无关的错
+        if sys.version_info[:2] != (3, 12):
+            sys.exit(
+                f"当前 Python 是 {sys.version_info.major}.{sys.version_info.minor}，"
+                "项目自带的 .venvlib 是为 3.12 编译的，不能混用。\n"
+                "请新建对应版本的环境并安装依赖：\n"
+                "    py -3.12 -m venv .venv && .venv\\Scripts\\pip install -r requirements.txt\n"
+                "或者直接 pip install -r requirements.txt 装到当前环境。"
+            )
         sys.path.append(str(_VENVLIB))
         try:
             import uvicorn  # noqa: F811

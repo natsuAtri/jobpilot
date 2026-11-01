@@ -921,6 +921,24 @@ def test_retry_policy(resume_id: int) -> None:
             os.environ["RA_LLM_STUB"] = stub_env
 
 
+
+def test_stub_text(resume_id: int) -> None:
+    """替身模式下 agent 分支要回一句人话，不能把 JSON 甩给用户。"""
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": [], "queue": [], "filters": {}, "goal": {}})
+    original = os.environ.get("RA_LLM_STUB")
+    os.environ["RA_LLM_STUB"] = "1"
+    try:
+        out = chat.handle(cid, "你好呀朋友", resume_id)
+    finally:
+        if original is None:
+            os.environ.pop("RA_LLM_STUB", None)
+        else:
+            os.environ["RA_LLM_STUB"] = original
+    check("替身模式不吐 JSON", "{" not in out["reply"], out["reply"][:60])
+    check("替身模式有人话提示", "替身模型" in out["reply"], out["reply"][:60])
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -953,6 +971,7 @@ def main() -> int:
     test_shared_client(resume_id)
     test_client_robustness(resume_id)
     test_retry_policy(resume_id)
+    test_stub_text(resume_id)
     test_trace()
 
     if failures:

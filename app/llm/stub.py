@@ -159,6 +159,9 @@ def generic_stub(task: str, messages: list[dict]) -> dict:
         return draft_stub(messages)
     if task == "resume_critique":
         return critique_stub(messages)
+    if task == "agent_tools":
+        # 替身不参与工具决策：给出可读的一句话，别把 JSON 甩给用户
+        return {"reply": "（替身模型：只能处理精确指令，请不要用它验证 agent 分支。）"}
     return {"ack": "", "patches": [], "question": "（替身模型：该任务未实现）"}
 
 

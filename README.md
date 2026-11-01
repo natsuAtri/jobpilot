@@ -30,6 +30,9 @@
 
 ## 快速开始
 
+> Python 版本：建议 3.12。项目自带的 `.venvlib` 是 cp312 编译的，
+> 用别的版本会直接报错；`run.py` 现在会先检查版本并给出提示。
+
 ```bash
 # 1. 依赖
 python -m venv .venv

@@ -191,6 +191,31 @@ def list_resumes() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def reset_derived(resume_id: int) -> dict[str, int]:
+    """简历内容被替换后，所有从它派生的东西都必须一起失效。
+
+    create_resume 是「同一 kind 只保留一份、原地覆盖」：重新导入时 resume_id 不变，
+    但章节内容全换了。不失效的话会出现「新简历 + 旧追问」：
+    对话补充页还在问你旧简历里的项目，终审页还在列旧简历的改写。
+    """
+    with get_conn() as conn:
+        dialogue = conn.execute(
+            "DELETE FROM dialogue_session WHERE resume_id = ?", (resume_id,)).rowcount
+        # generation_step 没有外键，得手动按 run 清，否则会留下孤儿检查点
+        conn.execute(
+            "DELETE FROM generation_step WHERE run_id IN "
+            "(SELECT id FROM generation_run WHERE base_resume_id = ?)", (resume_id,))
+        runs = conn.execute(
+            "DELETE FROM generation_run WHERE base_resume_id = ?", (resume_id,)).rowcount
+        matches = conn.execute(
+            "DELETE FROM match_result WHERE resume_id = ?", (resume_id,)).rowcount
+    return {
+        "dialogue_session": max(dialogue, 0),
+        "generation_run": max(runs, 0),
+        "match_result": max(matches, 0),
+    }
+
+
 def delete_resume(resume_id: int) -> int:
     """删除简历，连带删除引用它的投递记录。
 

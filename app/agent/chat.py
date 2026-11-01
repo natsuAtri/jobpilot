@@ -491,7 +491,7 @@ def _propose_apply(state: dict, index: int | None, text: str = "") -> str:
     number = _index_of(state, cand)
     state["pending"] = {"kind": "apply", "indices": [number], "command": f"投 {number}"}
     return (f"要投递第 {number} 个「{cand['title']}」（{cand.get('company') or ''}）吗？\n"
-            f"回复「投 {number}」，我会在你登录的浏览器里打开投递页。")
+            f"回复「投 {number}」，我就在浏览器里打开这个岗位的页面。")
 
 
 def _agent_turn(conversation_id: int, text: str, state: dict,
@@ -869,7 +869,7 @@ def _do_apply(state: dict, index: int | None, text: str = "") -> str:
     return (
         f"已在你的登录态浏览器里打开「{cand['title']}」（{cand.get('company') or ''}）的岗位页。\n"
         f"请在窗口里完成投递（验证码/提交由你自己操作）。\n"
-        f"**投完回来说一句「投好了」，我直接帮你记上**，不用自己去投递页点。"
+        f"**投完回来说一句「投好了」，我直接帮你记上。**"
     )
 
 
@@ -884,8 +884,8 @@ def _do_record_application(state: dict, index: int | None = None, note: str = ""
         cid = state.get("last_apply_cid")
         cand = next((c for c in candidates if cid and c.get("cid") == cid), None)
         if cand is None:
-            return ("还没打开过投递页，我不确定你投的是哪一个。\n"
-                    "先说「投第 N 个」打开岗位页，投完回来告诉我「投好了」。")
+            return ("还没帮你打开过岗位页，我不确定你投的是哪一个。\n"
+                    "先说「投第 N 个」，我在浏览器里打开它；投完回来告诉我「投好了」。")
     if cand is None:
         return _clarify_candidate(state, index)
 

@@ -68,6 +68,16 @@ async def import_pdf(file: UploadFile = File(...)):
     stem = Path(file.filename).stem
     title = f"{doc.name} 的简历" if doc.name else stem
     resume_id = repo.create_resume(doc, source_file=stored.name, title=title)
+    # 重新导入是「原地覆盖」：旧简历派生的对话补充 / 定制结果 / 匹配分全部失效
+    repo.reset_derived(resume_id)
+    from ..agent import conversation as conv
+
+    chat_state = conv.get_state(conv.get_active())
+    if chat_state:
+        # 候选的匹配分是按旧简历算的，留着会误导
+        chat_state["candidates"] = []
+        chat_state["queue"] = []
+        conv.set_state(conv.get_active(), chat_state)
     # 同步填充个人数据库，并尝试从 PDF 里提取证件照
     personal.build_from_resume(doc)
     if personal.photo_path() is None:

@@ -426,7 +426,7 @@ def test_apply_record(resume_id: int) -> None:
 
     # 没有打开过投递页时不该记账
     gate = chat._do_record_application({"candidates": cands, "resume_id": resume_id}, None, "")
-    check("没打开过投递页不记账", "还没打开过投递页" in gate, gate[:40])
+    check("没打开过岗位页不记账", "还没帮你打开过岗位页" in gate, gate[:40])
 
     out = chat._do_record_application(state, None, "手动投递")
     check("投递记录成功", "已记录" in out, out[:40])
@@ -763,7 +763,7 @@ def test_record_gate(resume_id: int) -> None:
     ]
     state = {"candidates": cands, "resume_id": resume_id, "performed": []}
     out = chat._do_record_application(state, None, "")
-    check("没打开过投递页不记账", "还没打开过投递页" in out, out[:40])
+    check("没打开过岗位页不记账", "还没帮你打开过岗位页" in out, out[:40])
 
     # 「第二个我已经投好了」必须走记录，而不是进 agent 循环
     cid = conv.get_active()
@@ -1116,6 +1116,32 @@ def test_input_caps(resume_id: int) -> None:
     check("状态不会因为长 JD 膨胀", len(_json.dumps(state)) < 10000, str(len(_json.dumps(state))))
 
 
+
+def test_reset_derived(resume_id: int) -> None:
+    """重新导入简历后，旧简历派生的会话/定制/匹配分必须一起失效。"""
+    from app.dialogue import engine as dlg_engine
+    from app.repo import generations as gen_repo
+    from app.repo import jobs as job_repo
+
+    old_session = dlg_engine.ensure_session(resume_id, "supplement")
+    job_id = job_repo.create_job(title="旧简历的岗位", description="d",
+                                 dedupe_key="stale-reset-1")
+    gen_repo.get_or_create_run(resume_id, job_id)
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO match_result(job_id, resume_id, total) VALUES (?, ?, ?)",
+            (job_id, resume_id, 50.0))
+
+    removed = resume_repo.reset_derived(resume_id)
+    check("旧对话会话被清", removed["dialogue_session"] >= 1, str(removed))
+    check("旧定制结果被清", removed["generation_run"] >= 1, str(removed))
+    check("旧匹配分被清", removed["match_result"] >= 1, str(removed))
+
+    fresh = dlg_engine.ensure_session(resume_id, "supplement")
+    check("会重新生成一个会话", fresh["id"] != old_session["id"],
+          f"{old_session['id']} vs {fresh['id']}")
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -1185,6 +1211,7 @@ def main() -> int:
     test_state_lock(resume_id)
     test_tool_timeout(resume_id)
     test_input_caps(resume_id)
+    test_reset_derived(resume_id)
     test_trace()
     test_prune()
 

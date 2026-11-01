@@ -491,6 +491,54 @@ def test_candidate_identity(resume_id: int) -> None:
         chat.search_51job = original
 
 
+
+def test_agent_pronoun(resume_id: int) -> None:
+    """agent 路径下「这个」必须按 last_cid 解析，不能静默取第 1 个。"""
+    cid = conv.get_active()
+    cands = [
+        {"cid": "c1", "source_id": "1", "title": "岗位一", "company": "A", "location": "北京",
+         "score": 60, "url": "u", "description": "岗位一的 JD"},
+        {"cid": "c2", "source_id": "2", "title": "岗位二", "company": "B", "location": "上海",
+         "score": 70, "url": "u", "description": "岗位二的 JD", "salary": "20-30K",
+         "experience": "1-3年", "education": "本科"},
+        {"cid": "c3", "source_id": "3", "title": "岗位三", "company": "C", "location": "深圳",
+         "score": 65, "url": "u", "description": "岗位三的 JD"},
+    ]
+    state = {"candidates": cands, "queue": [], "filters": {}, "goal": {},
+             "resume_id": resume_id, "last_cid": "c2"}
+    conv.set_state(cid, state)
+
+    seen: list[str] = []
+
+    async def judge_stub(doc, jd):
+        seen.append(jd)
+        return {"verdict": "推荐", "summary": "", "reasons": [], "risks": [], "suggestion": ""}
+
+    async def fake_tool_call(task, messages, tools, **kw):
+        return client.ToolReply(content="", tool_calls=[{
+            "id": "c1", "type": "function",
+            "function": {"name": "judge_fit", "arguments": "{}"}}])
+
+    original_judge, original_chat = chat.judge_mod.judge, client.chat_with_tools
+    chat.judge_mod.judge = judge_stub
+    client.chat_with_tools = fake_tool_call
+    try:
+        chat.handle(cid, "这个岗位适合我吗", resume_id)
+    finally:
+        chat.judge_mod.judge = original_judge
+        client.chat_with_tools = original_chat
+    check("「这个」判断的是第 2 个岗位", seen and "岗位二" in seen[0], str(seen)[:80])
+
+    # 投递提议也要落到第 2 个
+    out = chat._propose_apply(state, None, "投这个")
+    check("投递提议指向第 2 个", "第 2 个" in out and "岗位二" in out, out[:60])
+
+    # 问薪资时要给属性块，而不是整段 JD
+    detail = chat._do_ask_detail(state, None, "这个岗位薪资多少")
+    check("问薪资给属性块", "薪资：" in detail, detail[:60])
+    check("问薪资不倒整段 JD", "岗位二的 JD" not in detail, detail[:60])
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -515,6 +563,7 @@ def main() -> int:
     test_apply_record(resume_id)
     test_merged_proposal(resume_id)
     test_candidate_identity(resume_id)
+    test_agent_pronoun(resume_id)
     test_trace()
 
     if failures:

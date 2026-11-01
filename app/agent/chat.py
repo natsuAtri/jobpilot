@@ -232,8 +232,13 @@ def _history(conversation_id: int) -> list[dict]:
     return out
 
 
-def _run_tool(name: str, args: dict, state: dict, resume_id: int) -> tuple[str, str]:
-    """执行一个工具，返回（给用户看的文本, 意图名）。"""
+def _run_tool(name: str, args: dict, state: dict, resume_id: int,
+              utterance: str = "") -> tuple[str, str]:
+    """执行一个工具，返回（给用户看的文本, 意图名）。
+
+    用户原话必须透传下去：「这个」「那个」这类指代，以及问的是薪资还是 JD，
+    都只能从原话判断 —— 传空会静默退化成「第 1 个」或整段 JD。
+    """
     from .tools import TOOL_INTENT
 
     try:
@@ -250,10 +255,10 @@ def _run_tool(name: str, args: dict, state: dict, resume_id: int) -> tuple[str, 
             return _do_exclude(state, args.get("words") or ""), "exclude"
         if name == "ask_job_detail":
             idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
-            return _do_ask_detail_multi(state, idxs, ""), "ask_detail"
+            return _do_ask_detail_multi(state, idxs, utterance), "ask_detail"
         if name == "judge_fit":
             idxs = [int(i) for i in (args.get("indices") or [args.get("index")]) if i]
-            return _do_judge_multi(state, idxs, "", resume_id), "judge"
+            return _do_judge_multi(state, idxs, utterance, resume_id), "judge"
         if name == "list_candidates":
             return _do_status(state), "status"
         if name == "resume_advice":
@@ -273,7 +278,9 @@ def _run_tool(name: str, args: dict, state: dict, resume_id: int) -> tuple[str, 
             return _do_record_application(
                 state, idxs[0] if idxs else None, args.get("note") or ""), "apply"
         if name == "apply_job":
-            return _propose_apply(state, int(args.get("index") or 0) or None), "apply"
+            return _propose_apply(state,
+                                 int(args.get("index") or 0) or None,
+                                 utterance), "apply"
     except Exception as exc:  # noqa: BLE001 - 工具失败也要回话
         trace.record("error", name, args=args, result={"error": str(exc)})
         return f"这个操作没成功（{type(exc).__name__}：{exc}）。", TOOL_INTENT.get(name, "chat")
@@ -297,8 +304,8 @@ def _propose_tailor(state: dict, indices: list[int]) -> str:
             f"回复「{command}」我就开始（约 30 秒，后台并行）。")
 
 
-def _propose_apply(state: dict, index: int | None) -> str:
-    cand = _resolve_candidate(state, index, "")
+def _propose_apply(state: dict, index: int | None, text: str = "") -> str:
+    cand = _resolve_candidate(state, index, text)
     if cand is None:
         return _clarify_candidate(state, index)
     number = _index_of(state, cand)
@@ -349,7 +356,7 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
                 args = {}
             # 工具内部会 asyncio.run（judge / 关键词规划），放到线程里跑避免嵌套事件循环
             out, intent_name = await asyncio.to_thread(
-                _run_tool, name, args, state, resume_id)
+                _run_tool, name, args, state, resume_id, text)
             used.append(intent_name)
             produced.append(out)
             trace.record("tool", name, args=args, result={"chars": len(out)})

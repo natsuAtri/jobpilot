@@ -2,6 +2,8 @@
 
 只放「只读 / 可重复」的工具。定制简历（启动后台任务）和投递（打开浏览器）
 不交给模型自动触发——它们有副作用、会花钱，由规则精确命中，用户显式说才执行。
+记录投递（record_application）同理：JD 来自网页抓取，只要写工具在模型手里，
+任何间接注入都有落点，所以它也不在 TOOLS 里。
 """
 from __future__ import annotations
 
@@ -140,23 +142,6 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "record_application",
-            "description": "把「已经投递了」记录进投递表。用户说「投好了」「已投递」「刚投完」时调用。"
-                           "不指定序号时默认记录最近一次打开的那个岗位。这个工具会真正写入数据。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "index": {"type": "integer", "description": "候选序号，不知道就留空"},
-                    "indices": {"type": "array", "items": {"type": "integer"},
-                                "description": "一次记录多个岗位"},
-                    "note": {"type": "string", "description": "备注，比如渠道或投递方式"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "apply_job",
             "description": "打开某个岗位的投递页。注意：这只是向用户提议，不会立即执行；"
                            "用户必须先确认。只在用户明确说要投递时调用。",
@@ -180,7 +165,6 @@ TOOL_INTENT = {
     "resume_advice": "advice",
     "tailor_resume": "tailor",
     "apply_job": "apply",
-    "record_application": "apply",
 }
 
 SYSTEM_PROMPT = """你是 JobPilot，一个本地求职 agent。你能调用工具帮用户找岗位、看岗位、判断适配度、改简历、投递。

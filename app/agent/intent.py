@@ -101,6 +101,10 @@ def classify(text: str) -> Intent:
     if re.search(r"(投递|投)\s*(第\s*[一二三四五六七八九十\d]+\s*个|这个|那个|它)", t):
         return Intent("apply", {"index": _index(t), "text": t})
 
+    # 「投好了 / 已投递」——记录投递，不是打开投递页
+    if re.search(r"(投好了|投完了|已投递|刚投完|投过了|已经投了|投好啦)", t):
+        return Intent("record", {"index": _index(t), "text": t})
+
     # 问某个候选的详情/要求/公司/薪资
     if re.search(r"(第\s*[一二三四五六七八九十\d]+\s*个|这个|那个|它|第一个)", t) and re.search(
         r"(要求|需求|职责|干什么|做什么|详情|介绍|公司|薪资|工资|地点|在哪|经验|学历|怎么样|是什么|内容)",

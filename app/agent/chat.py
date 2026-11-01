@@ -60,6 +60,7 @@ SUGGESTIONS: dict[str, list[str]] = {
     "exclude": ["定制第 1 个", "看第 2 个的要求"],
     "tailor": ["投第 1 个", "看第 2 个的要求"],
     "apply": ["看第 2 个的要求", "现在有什么"],
+    "record": ["看第 2 个的要求", "现在有什么"],
     "ask_detail": ["定制第 1 个", "投第 1 个"],
     "judge": ["定制第 1 个", "投第 1 个"],
     "status": ["定制第 1 个", "排除外包"],
@@ -75,6 +76,8 @@ _FAST_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^(?:定制|优化|改)\s*(?:第\s*)?([一二三四五六七八九十\d]{1,3})\s*个?$"), "tailor"),
     (re.compile(r"^再(?:找|来)\s*(?:(\d{1,2}|几|些)\s*个)?$"), "more"),
     (re.compile(r"^(?:排除|不要)\s*(.{1,12})$"), "exclude"),
+    (re.compile(r"^(?:投好了|投完了|已投递|刚投完|已经投了|投过了)\s*(?:第\s*)?"
+                r"([一二三四五六七八九十\d]{1,3})?\s*个?$"), "record"),
     (re.compile(r"^(?:现在有什么|看看候选|有哪些|列出候选|候选列表)$"), "status"),
     (re.compile(r"^第?\s*([一二三四五六七八九十\d]{1,3})\s*个\s*(?:的)?\s*(?:要求|职责|薪资|公司|介绍)"), "ask_detail"),
 ]
@@ -105,10 +108,11 @@ def fast_intent(text: str) -> intent_mod.Intent | None:
         match = pattern.match(t)
         if not match:
             continue
-        if name in ("apply", "tailor", "ask_detail"):
+        if name in ("apply", "tailor", "ask_detail", "record"):
             raw = match.group(1)
-            idx = int(raw) if raw.isdigit() else intent_mod.CN_NUM.get(raw)
-            return intent_mod.Intent(name, {"index": idx, "indices": [idx] if idx else [], "text": t})
+            idx = (int(raw) if raw.isdigit() else intent_mod.CN_NUM.get(raw)) if raw else None
+            return intent_mod.Intent(
+                name, {"index": idx, "indices": [idx] if idx else [], "text": t})
         if name == "more":
             count = match.group(1)
             return intent_mod.Intent(
@@ -147,6 +151,11 @@ def handle(conversation_id: int, text: str, resume_id: int) -> dict:
     _ensure_cids(state)
 
     intent = fast_intent(text)
+    if intent is None:
+        # 写操作必须由用户显式发起：先认「投好了」这类记录意图，别丢给模型
+        guess = intent_mod.classify(text)
+        if guess.name == "record":
+            intent = guess
     if intent is not None:
         trace.record("intent", intent.name, args={"text": text[:160], "mode": "fast-path"})
         reply = _dispatch(intent, text, state, resume_id)
@@ -211,6 +220,8 @@ def _dispatch(intent, text: str, state: dict, resume_id: int) -> str:
     if name == "judge":
         return _do_judge_multi(
             state, params.get("indices") or ([params["index"]] if params.get("index") else []), text, resume_id)
+    if name == "record":
+        return _do_record_application(state, params.get("index"), params.get("note") or "")
     if name == "advice":
         return _do_advice(resume_id)
     if name == "status":
@@ -400,6 +411,8 @@ def _propose_tailor(state: dict, indices: list[int]) -> str:
     valid = [i for i in indices if 1 <= i <= len(candidates)]
     if not valid:
         return _clarify_candidate(state, indices[0] if indices else None)
+    state["pending"] = {"kind": "tailor", "indices": valid,
+                        "command": "定制" + "和".join(str(i) for i in valid)}
     if len(valid) == 1:
         number = valid[0]
         cand = candidates[number - 1]
@@ -416,6 +429,7 @@ def _propose_apply(state: dict, index: int | None, text: str = "") -> str:
     if cand is None:
         return _clarify_candidate(state, index)
     number = _index_of(state, cand)
+    state["pending"] = {"kind": "apply", "indices": [number], "command": f"投 {number}"}
     return (f"要投递第 {number} 个「{cand['title']}」（{cand.get('company') or ''}）吗？\n"
             f"回复「投 {number}」，我会在你登录的浏览器里打开投递页。")
 
@@ -735,6 +749,7 @@ def _do_tailor(state: dict, index: int | None, resume_id: int, text: str = "") -
     from ..routes import generate as gen_route
 
     run_id = gen_route._start(job_id, resume_id)
+    state.pop("pending", None)
     _mark_performed(state, "tailor", cand.get("cid") or "")
 
     queue = state.setdefault("queue", [])
@@ -765,6 +780,7 @@ def _do_apply(state: dict, index: int | None, text: str = "") -> str:
         return "启动浏览器失败，检查浏览器配置。"
 
     state["last_apply_cid"] = cand.get("cid")
+    state.pop("pending", None)
     _mark_performed(state, "apply_open", cand.get("cid") or "")
     return (
         f"已在你的登录态浏览器里打开「{cand['title']}」（{cand.get('company') or ''}）的岗位页。\n"

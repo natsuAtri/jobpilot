@@ -710,6 +710,46 @@ def test_budget(resume_id: int) -> None:
     check("代码缺陷不被吞成规则回复", isinstance(raised, RuntimeError), str(raised))
 
 
+
+def test_record_gate(resume_id: int) -> None:
+    """记录投递必须由用户显式发起，而且不能交给模型（写工具已下架）。"""
+    from app.agent.tools import TOOLS
+
+    names = {tool["function"]["name"] for tool in TOOLS}
+    check("record_application 不在工具面", "record_application" not in names, str(sorted(names)))
+
+    cands = [
+        {"cid": "c1", "source_id": "1", "title": "岗位一", "company": "A", "location": "北京",
+         "score": 60, "url": "u", "description": "d"},
+        {"cid": "c2", "source_id": "2", "title": "岗位二", "company": "B", "location": "上海",
+         "score": 70, "url": "u", "description": "d"},
+    ]
+    state = {"candidates": cands, "resume_id": resume_id, "performed": []}
+    out = chat._do_record_application(state, None, "")
+    check("没打开过投递页不记账", "还没打开过投递页" in out, out[:40])
+
+    # 「第二个我已经投好了」必须走记录，而不是进 agent 循环
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": cands, "queue": [], "filters": {}, "goal": {},
+                         "resume_id": resume_id, "last_apply_cid": "c2"})
+
+    async def boom(*a, **k):
+        raise AssertionError("记录投递不应调用模型")
+
+    original = client.chat_with_tools
+    client.chat_with_tools = boom
+    try:
+        out = chat.handle(cid, "第二个我已经投好了", resume_id)
+    finally:
+        client.chat_with_tools = original
+
+    check("投好了走规则不调模型", out["intent"] == "record", out["intent"])
+    check("回复确认已记录", "已记录" in out["reply"], out["reply"][:40])
+    performed = conv.get_state(cid).get("performed") or []
+    check("performed 里有 record",
+          any(item.get("action") == "record" for item in performed), str(performed))
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -738,6 +778,7 @@ def main() -> int:
     test_tailor_idempotent(resume_id)
     test_tool_result_shape(resume_id)
     test_budget(resume_id)
+    test_record_gate(resume_id)
     test_trace()
 
     if failures:

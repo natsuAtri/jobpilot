@@ -82,7 +82,8 @@ SUGGESTIONS: dict[str, list[str]] = {
     "exclude": ["定制第 1 个", "看第 2 个的要求"],
     "tailor": ["投第 1 个", "看第 2 个的要求"],
     "apply": ["看第 2 个的要求", "现在有什么"],
-    "record": ["看第 2 个的要求", "现在有什么"],
+    "record": ["投递记录", "看第 2 个的要求"],
+    "applications": ["现在有什么", "找北京的 AI 应用岗位"],
     "ask_detail": ["定制第 1 个", "投第 1 个"],
     "judge": ["定制第 1 个", "投第 1 个"],
     "status": ["定制第 1 个", "排除外包"],
@@ -100,6 +101,7 @@ _FAST_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^(?:排除|不要)\s*(.{1,12})$"), "exclude"),
     (re.compile(r"^(?:投好了|投完了|已投递|刚投完|已经投了|投过了)\s*(?:第\s*)?"
                 r"([一二三四五六七八九十\d]{1,3})?\s*个?$"), "record"),
+    (re.compile(r"^(?:投递记录|我的投递|投了哪些|投递进度|看看投递)$"), "applications"),
     (re.compile(r"^(?:现在有什么|看看候选|有哪些|列出候选|候选列表)$"), "status"),
     (re.compile(r"^第?\s*([一二三四五六七八九十\d]{1,3})\s*个\s*(?:的)?\s*(?:要求|职责|薪资|公司|介绍)"), "ask_detail"),
 ]
@@ -260,6 +262,8 @@ def _dispatch(intent, text: str, state: dict, resume_id: int) -> str:
             state, params.get("indices") or ([params["index"]] if params.get("index") else []), text, resume_id)
     if name == "record":
         return _do_record_application(state, params.get("index"), params.get("note") or "")
+    if name == "applications":
+        return _tool_applications({}, state, resume_id, text).text
     if name == "advice":
         return _do_advice(resume_id)
     if name == "status":
@@ -396,6 +400,46 @@ def _tool_list(args: dict, state: dict, resume_id: int, utterance: str) -> ToolR
     })
 
 
+_APPLICATION_STATUS = {
+    "draft": "准备中", "submitted": "已投递", "viewed": "已查看", "replied": "有回复",
+    "interview": "面试", "offer": "Offer", "rejected": "已拒绝", "withdrawn": "已撤回",
+}
+
+
+def _tool_applications(args: dict, state: dict, resume_id: int,
+                       utterance: str) -> ToolResult:
+    from ..repo import applications as app_repo
+
+    limit = int(args.get("limit") or 10)
+    rows = app_repo.list_applications()
+    if not rows:
+        return ToolResult(True, "applications",
+                          "还没有投递记录。说「投第 N 个」我会在浏览器里打开那个岗位，"
+                          "你投完说一句「投好了」，我就记上。",
+                          {"total": 0, "applications": []})
+
+    shown = rows[:max(1, min(limit, 30))]
+    lines = [f"共 {len(rows)} 条投递记录："]
+    for row in shown:
+        status = _APPLICATION_STATUS.get(row.get("status") or "", row.get("status") or "")
+        company = row.get("company") or "公司未填"
+        when = (row.get("submitted_at") or "")[:10]
+        lines.append(f"· {row.get('job_title') or '岗位'}（{company}）· {status} · {when}")
+    if len(rows) > len(shown):
+        lines.append(f"…还有 {len(rows) - len(shown)} 条")
+    lines.append("看全部：[投递记录](/applications)")
+    data = {
+        "total": len(rows),
+        "applications": [
+            {"job_id": row.get("job_id"), "title": row.get("job_title") or "",
+             "company": row.get("company") or "", "status": row.get("status") or "",
+             "submitted_at": row.get("submitted_at") or ""}
+            for row in rows[:30]
+        ],
+    }
+    return ToolResult(True, "applications", "\n".join(lines), data)
+
+
 def _tool_advice(args: dict, state: dict, resume_id: int, utterance: str) -> ToolResult:
     text, suggestions = _advice_of(resume_id)
     return ToolResult(True, "advice", text, {"suggestions": suggestions})
@@ -439,6 +483,7 @@ _TOOL_HANDLERS: dict[str, tools_mod.Handler] = {
     "ask_job_detail": _tool_detail,
     "judge_fit": _tool_judge,
     "list_candidates": _tool_list,
+    "list_applications": _tool_applications,
     "resume_advice": _tool_advice,
     "tailor_resume": _tool_tailor,
     "apply_job": _tool_apply,

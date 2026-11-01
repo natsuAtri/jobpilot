@@ -23,6 +23,7 @@ os.environ["RA_LLM_STUB"] = "1"
 
 from app.agent import chat, intent  # noqa: E402
 from app.agent import conversation as conv
+from app.agent.tools import ToolResult
 from app.db import get_conn, migrate  # noqa: E402
 from app.llm import client  # noqa: E402
 from app.models import Bullet, Item, ResumeDoc, Section  # noqa: E402
@@ -1142,6 +1143,29 @@ def test_reset_derived(resume_id: int) -> None:
           f"{old_session['id']} vs {fresh['id']}")
 
 
+
+def test_list_applications(resume_id: int) -> None:
+    """「给我看看投递记录」要有工具能查，而不是说自己查不到。"""
+    from app.agent import tools as tools_mod
+    from app.repo import applications as app_repo
+
+    check("list_applications 在工具面里", "list_applications" in tools_mod.REGISTRY)
+
+    intent = chat.fast_intent("投递记录")
+    check("「投递记录」走快路径", intent is not None and intent.name == "applications",
+          str(intent))
+
+    rows_before = app_repo.list_applications()
+    out = chat._run_tool("list_applications", {}, {"candidates": []}, resume_id, "")
+    check("能返回 ToolResult", isinstance(out, ToolResult), type(out).__name__)
+    check("条数与库里一致", out.data.get("total") == len(rows_before),
+          f"{out.data.get('total')} vs {len(rows_before)}")
+    if rows_before:
+        check("列了岗位", "条投递记录" in out.text, out.text[:60])
+    else:
+        check("没记录时给出下一步", "还没有投递记录" in out.text, out.text[:60])
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -1212,6 +1236,7 @@ def main() -> int:
     test_tool_timeout(resume_id)
     test_input_caps(resume_id)
     test_reset_derived(resume_id)
+    test_list_applications(resume_id)
     test_trace()
     test_prune()
 

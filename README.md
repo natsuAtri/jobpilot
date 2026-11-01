@@ -132,7 +132,7 @@ app/
   dialogue/   解析答疑与 patch 应用
   routes/     FastAPI 路由
 migrations/   15 个 SQL 迁移
-tools/        21 个脚本（257 条断言）+ 意图/对话评测 + 夹具回放
+tools/        21 个脚本（262 条断言）+ 意图/对话评测 + 夹具回放
 docs/         技术报告 / 设计文档 / 改动日志 / 已知问题
 ```
 
@@ -155,7 +155,7 @@ python tools/smoke_agent.py                  # 路由 / 工具循环 / 检查点
 python tools/smoke_agent_replay.py           # 夹具回放 5 项（CI 也跑这个）
 ```
 
-合计 **257 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
+合计 **262 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
 不需要 API Key 就能验通链路。
 
 另有两个评测集：

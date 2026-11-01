@@ -1194,6 +1194,37 @@ def test_list_applications(resume_id: int) -> None:
         check("没记录时给出下一步", "还没有投递记录" in out.text, out.text[:60])
 
 
+
+def test_multiple_resumes() -> None:
+    """导入两份不同的简历，必须是两份；同一份文件重复导入才复用。"""
+    doc_a = ResumeDoc(name="甲同学")
+    doc_a.sections = [Section(type="project", items=[Item(org="项目甲")])]
+    doc_b = ResumeDoc(name="乙同学")
+    doc_b.sections = [Section(type="project", items=[Item(org="项目乙")])]
+
+    id_a = resume_repo.create_resume(doc_a, kind="imported", title="甲 的简历",
+                                     source_hash="hash-aaa")
+    id_b = resume_repo.create_resume(doc_b, kind="imported", title="乙 的简历",
+                                     source_hash="hash-bbb")
+    check("两份不同简历并存", id_a != id_b, f"{id_a} vs {id_b}")
+    check("库里能查到两份", resume_repo.load_doc(id_a) is not None
+          and resume_repo.load_doc(id_b) is not None)
+
+    again = resume_repo.create_resume(
+        doc_a, kind="imported", title="甲 的简历", source_hash="hash-aaa",
+        reuse=resume_repo.find_by_source_hash("hash-aaa"))
+    check("同一份文件复用原记录", again == id_a, f"{again} vs {id_a}")
+
+    # 乙的简历没有被覆盖
+    doc_check = resume_repo.load_doc(id_b)
+    check("另一份简历内容没被冲掉",
+          doc_check is not None and doc_check.sections[0].items[0].org == "项目乙",
+          str(doc_check.sections[0].items[0].org if doc_check else None))
+
+    resume_repo.delete_resume(id_a)
+    resume_repo.delete_resume(id_b)
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -1265,6 +1296,7 @@ def main() -> int:
     test_input_caps(resume_id)
     test_reset_derived(resume_id)
     test_list_applications(resume_id)
+    test_multiple_resumes()
     test_trace()
     test_prune()
 

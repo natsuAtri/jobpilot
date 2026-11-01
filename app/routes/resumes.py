@@ -1,6 +1,7 @@
 """简历：导入、校对、保存。"""
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from pathlib import Path
@@ -49,8 +50,11 @@ async def import_pdf(file: UploadFile = File(...)):
         raise HTTPException(400, "只支持 PDF")
 
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    raw = await file.read()
+    # 用内容指纹判断「是不是同一份文件」：不同文件 = 不同简历，可以并存
+    source_hash = hashlib.sha256(raw).hexdigest()
     stored = UPLOADS_DIR / f"{uuid.uuid4().hex}.pdf"
-    stored.write_bytes(await file.read())
+    stored.write_bytes(raw)
 
     pages = extract_pages(stored)
     if not pages or not any(p.lines for p in pages):
@@ -67,9 +71,16 @@ async def import_pdf(file: UploadFile = File(...)):
         doc = await refine(pages, doc)
     stem = Path(file.filename).stem
     title = f"{doc.name} 的简历" if doc.name else stem
-    resume_id = repo.create_resume(doc, source_file=stored.name, title=title)
-    # 重新导入是「原地覆盖」：旧简历派生的对话补充 / 定制结果 / 匹配分全部失效
-    repo.reset_derived(resume_id)
+    # 同一份文件重复导入 → 覆盖原来那条（解析器升级后能刷新）；
+    # 不同文件 → 新建一份，多份简历并存。
+    reuse = repo.find_by_source_hash(source_hash)
+    resume_id = repo.create_resume(
+        doc, source_file=stored.name, title=title,
+        source_hash=source_hash, reuse=reuse,
+    )
+    if reuse:
+        # 覆盖时旧简历派生的对话补充 / 定制结果 / 匹配分全部失效
+        repo.reset_derived(resume_id)
     from ..agent import conversation as conv
 
     chat_state = conv.get_state(conv.get_active())
@@ -85,7 +96,8 @@ async def import_pdf(file: UploadFile = File(...)):
         if found:
             personal.set_photo(found[0], found[1], source="resume")
     # 先进入解析复核，而不是直接去编辑——让用户先回答 Agent 的疑问
-    msg = "简历已导入。先回答下面几个疑点，也可以直接去 Agent 让它帮你找岗位"
+    msg = ("这份简历之前导入过，已按最新解析结果刷新。"
+           if reuse else "简历已导入。先回答下面几个疑点，也可以直接去 Agent 让它帮你找岗位")
     return RedirectResponse(f"/resumes/{resume_id}/dialogue?msg={msg}", status_code=303)
 
 

@@ -21,6 +21,38 @@ def ensure_profile(name: str = "") -> int:
         return int(cur.lastrowid or 0)
 
 
+def find_by_source_hash(source_hash: str) -> int | None:
+    """同一份 PDF 重复导入时，找到之前那条简历。"""
+    if not source_hash:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM resume WHERE source_hash = ? ORDER BY id LIMIT 1", (source_hash,)
+        ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _reusable_id(kind: str, title: str, base_resume_id: int | None) -> int | None:
+    """哪些情况下应该复用已有简历，而不是新建一份。
+
+    - generated（从零创建）：始终复用同一份空白工作区，避免满屏「新简历」
+    - tailored（定制版）：同一份基础简历 + 同一个岗位标题 → 复用（重新生成覆盖）
+    - imported：不复用，由调用方用文件指纹决定（见 find_by_source_hash）
+    """
+    with get_conn() as conn:
+        if kind == "generated":
+            row = conn.execute(
+                "SELECT id FROM resume WHERE kind = 'generated' ORDER BY id LIMIT 1").fetchone()
+        elif kind == "tailored":
+            row = conn.execute(
+                "SELECT id FROM resume WHERE kind = 'tailored' AND title = ? "
+                "AND IFNULL(base_resume_id, -1) = IFNULL(?, -1) ORDER BY id LIMIT 1",
+                (title, base_resume_id)).fetchone()
+        else:
+            row = None
+    return int(row["id"]) if row else None
+
+
 def create_resume(
     doc: ResumeDoc,
     *,
@@ -29,29 +61,30 @@ def create_resume(
     title: str = "",
     profile_id: int | None = None,
     base_resume_id: int | None = None,
+    source_hash: str | None = None,
+    reuse: int | None = None,
 ) -> int:
-    pid = profile_id or ensure_profile(doc.name)
+    """新建一份简历；只在对的位置复用已有记录。
 
-    # 单份简历：同一 kind 只保留一份，重复导入/生成时原地覆盖，
-    # 不再产生「（2）（3）」这种重复列表项。
+    多份简历并存是正常状态：导入两份不同的 PDF 就是两份简历。
+    """
+    pid = profile_id or ensure_profile(doc.name)
+    base_title = title or (doc.name + " 的简历")
+
+    resume_id = reuse or _reusable_id(kind, base_title, base_resume_id)
     with get_conn() as conn:
-        existing = conn.execute(
-            "SELECT id FROM resume WHERE kind = ? ORDER BY id LIMIT 1", (kind,)
-        ).fetchone()
-        if existing:
-            resume_id = int(existing["id"])
+        if resume_id:
             conn.execute(
                 "UPDATE resume SET title = ?, source_file = ?, parse_status = 'parsed', "
-                "base_resume_id = ?, created_at = ? WHERE id = ?",
-                (title or (doc.name + " 的简历"), source_file, base_resume_id,
-                 now_local(), resume_id),
+                "base_resume_id = ?, source_hash = COALESCE(?, source_hash), created_at = ? "
+                "WHERE id = ?",
+                (base_title, source_file, base_resume_id, source_hash, now_local(), resume_id),
             )
         else:
-            base_title = title or (doc.name + " 的简历")
             cur = conn.execute(
                 "INSERT INTO resume(profile_id, kind, title, source_file, parse_status, "
-                "base_resume_id, created_at) VALUES (?, ?, ?, ?, 'parsed', ?, ?)",
-                (pid, kind, base_title, source_file, base_resume_id, now_local()),
+                "base_resume_id, source_hash, created_at) VALUES (?, ?, ?, ?, 'parsed', ?, ?, ?)",
+                (pid, kind, base_title, source_file, base_resume_id, source_hash, now_local()),
             )
             resume_id = int(cur.lastrowid or 0)
     # 解析出的联系方式必须落库，否则校对界面里就是空的

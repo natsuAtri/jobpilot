@@ -37,7 +37,33 @@ async def session(timeout: float = DEFAULT_TIMEOUT):
 
 
 class LLMError(RuntimeError):
-    """调用失败，附带可读原因，便于直接显示在界面上。"""
+    """调用失败，附带可读原因与分类。
+
+    kind 用于区分「等会儿再试」和「配置错了」：
+    network / auth / rate_limit / server / format / config
+    """
+
+    def __init__(self, message: str, kind: str = "network") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def _kind_for_status(status: int) -> str:
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limit"
+    if 500 <= status < 600:
+        return "server"
+    return "format"
+
+
+def _retry_delay(resp: "httpx.Response | None", attempt: int) -> float:
+    """优先听服务端的 Retry-After，拿不到再退避 + 抖动。"""
+    raw = resp.headers.get("retry-after") if resp is not None else None
+    if raw and raw.strip().isdigit():
+        return max(0.0, min(8.0, float(raw.strip())))
+    return 1.5 * (attempt + 1) + 0.5 * attempt
 
 
 @dataclass
@@ -110,7 +136,7 @@ async def complete(
                 if attempt < 2:
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
-                raise LLMError(last_error) from exc
+                raise LLMError(last_error, kind="network") from exc
 
             if resp.status_code < 400:
                 break
@@ -122,21 +148,21 @@ async def complete(
                 json_mode = False
                 continue
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                await asyncio.sleep(1.5 * (attempt + 1))
+                await asyncio.sleep(_retry_delay(resp, attempt))
                 continue
-            raise LLMError(last_error)
+            raise LLMError(last_error, kind=_kind_for_status(resp.status_code))
     finally:
         if own:
             await http.aclose()
 
     if resp is None or resp.status_code >= 400:
-        raise LLMError(last_error or f"{provider.label} 请求失败")
+        raise LLMError(last_error or f"{provider.label} 请求失败", kind="server")
 
     try:
         data = resp.json()
         text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise LLMError(f"{provider.label} 返回了无法解析的响应") from exc
+        raise LLMError(f"{provider.label} 返回了无法解析的响应", kind="format") from exc
 
     usage = data.get("usage", {}) if isinstance(data, dict) else {}
     try:
@@ -262,7 +288,7 @@ async def chat_with_tools(
     try:
         provider, model = registry.resolve(task)
     except LookupError as exc:
-        raise LLMError(f"{exc}，请在 .env 里配置模型。") from exc
+        raise LLMError(f"{exc}，请在 .env 里配置模型。", kind="config") from exc
 
     payload: dict[str, Any] = {
         "model": model,
@@ -296,26 +322,26 @@ async def chat_with_tools(
                 if attempt < 2:
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
-                raise LLMError(last_error) from exc
+                raise LLMError(last_error, kind="network") from exc
             if resp.status_code < 400:
                 break
             last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                await asyncio.sleep(1.5 * (attempt + 1))
+                await asyncio.sleep(_retry_delay(resp, attempt))
                 continue
-            raise LLMError(last_error)
+            raise LLMError(last_error, kind=_kind_for_status(resp.status_code))
     finally:
         if own:
             await http.aclose()
 
     if resp is None or resp.status_code >= 400:
-        raise LLMError(last_error or f"{provider.label} 请求失败")
+        raise LLMError(last_error or f"{provider.label} 请求失败", kind="server")
 
     try:
         data = resp.json()
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise LLMError(f"{provider.label} 返回了无法解析的响应") from exc
+        raise LLMError(f"{provider.label} 返回了无法解析的响应", kind="format") from exc
 
     raw_calls = message.get("tool_calls") or []
     # 严格网关会因为回传多余字段（如 index）报 400，只留必要字段

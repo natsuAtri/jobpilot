@@ -842,6 +842,62 @@ def test_client_robustness(resume_id: int) -> None:
             os.environ["RA_LLM_STUB"] = stub_env
 
 
+
+def test_retry_policy(resume_id: int) -> None:
+    """限流听 Retry-After；鉴权错误不重试。"""
+    import time as _time
+
+    import httpx
+
+    from app.llm import client as llm
+
+    stub_env = os.environ.pop("RA_LLM_STUB", None)
+    try:
+        hits = {"n": 0}
+
+        def limited(request):
+            hits["n"] += 1
+            return httpx.Response(429, headers={"retry-after": "0"}, json={"error": "slow"})
+
+        async def run_limited():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(limited)) as http:
+                return await llm.complete(
+                    "resume_strategy", [{"role": "user", "content": "x"}], client=http)
+
+        started = _time.time()
+        try:
+            asyncio.run(run_limited())
+            raised = None
+        except llm.LLMError as exc:
+            raised = exc
+        elapsed = _time.time() - started
+        check("429 总共请求 3 次", hits["n"] == 3, str(hits["n"]))
+        check("听 Retry-After，不傻等", elapsed < 3, f"{elapsed:.1f}s")
+        check("限流分类正确", raised is not None and raised.kind == "rate_limit", str(raised))
+
+        hits["n"] = 0
+
+        def unauthorised(request):
+            hits["n"] += 1
+            return httpx.Response(401, json={"error": "bad key"})
+
+        async def run_auth():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(unauthorised)) as http:
+                return await llm.complete(
+                    "resume_strategy", [{"role": "user", "content": "x"}], client=http)
+
+        try:
+            asyncio.run(run_auth())
+            raised2 = None
+        except llm.LLMError as exc:
+            raised2 = exc
+        check("401 不重试", hits["n"] == 1, str(hits["n"]))
+        check("鉴权分类正确", raised2 is not None and raised2.kind == "auth", str(raised2))
+    finally:
+        if stub_env is not None:
+            os.environ["RA_LLM_STUB"] = stub_env
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -873,6 +929,7 @@ def main() -> int:
     test_record_gate(resume_id)
     test_shared_client(resume_id)
     test_client_robustness(resume_id)
+    test_retry_policy(resume_id)
     test_trace()
 
     if failures:

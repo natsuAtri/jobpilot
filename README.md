@@ -131,8 +131,8 @@ app/
   agent/      对话意图、会话状态、适配度判断
   dialogue/   解析答疑与 patch 应用
   routes/     FastAPI 路由
-migrations/   14 个 SQL 迁移
-tools/        20 个脚本（234 条断言）+ 意图/对话评测 + 夹具回放
+migrations/   15 个 SQL 迁移
+tools/        21 个脚本（253 条断言）+ 意图/对话评测 + 夹具回放
 docs/         技术报告 / 设计文档 / 改动日志 / 已知问题
 ```
 
@@ -151,11 +151,11 @@ python tools/smoke_apply.py                  # 投递 13 项
 python tools/smoke_search_personal.py        # 个人库 19 项
 python tools/smoke_scratch.py                # 从零创建 10 项
 RA_LLM_STUB=1 python tools/smoke_generate.py # 双 agent 13 项
-python tools/smoke_agent.py                  # 路由 / 工具循环 / 澄清 / 检查点 111 项
+python tools/smoke_agent.py                  # 路由 / 工具循环 / 检查点 / 注册表 124 项
 python tools/smoke_agent_replay.py           # 夹具回放 5 项（CI 也跑这个）
 ```
 
-合计 **234 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
+合计 **253 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
 不需要 API Key 就能验通链路。
 
 另有两个评测集：
@@ -165,6 +165,16 @@ python tools/eval_intent.py -v   # 30 条意图，离线，门禁式退出码
 python tools/eval_agent.py -v    # 17 条对话，需要真实模型，验证工具选择
 python tools/record_agent.py     # 用真实模型重录夹具（改了工具描述后跑一次）
 ```
+
+### 维护
+
+```bash
+python tools/prune.py --dry-run   # 看会清理多少老数据
+python tools/prune.py             # 清理（启动时也会自动跑一次）
+```
+
+`agent_trace` 留 7 天 / 5000 行，每个会话留最近 200 条消息，生成检查点留 7 天。
+只清观测与日志，不动简历 / 岗位 / 投递记录。
 
 ## 开发
 

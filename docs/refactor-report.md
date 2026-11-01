@@ -161,3 +161,25 @@ smoke_generate.py     PASS=13  FAIL=0
 ruff: All checks passed
 mypy: no issues found in 84 source files
 ```
+
+
+---
+
+## 7. 第 2 批：Agent 地基补齐（6 项）
+
+任务书之外，按「agent 项目本来该有什么」补的一批基础设施。用户确认后执行。
+
+| # | 问题（证据） | 改法 | 新增断言 |
+|---|---|---|---|
+| 1 | 工具声明 / 意图 / 分发三处手工同步；`record_application` 分支已成死代码 | `Tool` 注册表 + `bind_all` + `validate`；`main.py` 启动校验 | +4 |
+| 2 | `get_state`/`set_state` 裸读改写，双击回车互相覆盖 | 按会话加进程内锁，`handle` 串行 | +3 |
+| 3 | `application` 无唯一约束，写入是 find-then-insert | 迁移 015 去重 + 唯一索引；`upsert_application` | +1 |
+| 4 | 工具调用无超时；失败统一一句话 | `TOOL_TIMEOUT=60s` + `wait_for`；`ToolResult.error_kind` | +4 |
+| 5 | 用户消息 / JD / 关键词均无上限 | 4000 / 2000 / 60 字上限 | +4 |
+| 6 | `agent_trace` 等观测表永不清理 | `repo/maintenance.py` + 启动清理 + `tools/prune.py` | +3 |
+
+断言 234 → **253**；ruff / mypy 仍为 0。
+
+**偏差**：任务书没有这部分，是用户追加需求；两项未做——
+prompt 版本化（`prompt_version` 表仍未使用）和 pytest 化测试基础设施，
+用户同意放到后续版本。

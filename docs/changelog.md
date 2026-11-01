@@ -664,3 +664,21 @@ ATS 版不含；奖项章节在两种版本都正常。
 - T14（删死代码）按用户要求推迟到后续版本
 
 **测试**：断言 176 → **234**；意图 30/30；对话评测 17/17；ruff / mypy 均 0 问题。
+
+
+---
+
+## 第 36 轮：Agent 地基补齐
+
+上一轮把「有 bug 的地方」修了，这一轮补「agent 项目本来该有但现在没有」的基础设施。
+
+| # | 问题 | 改法 |
+|---|---|---|
+| 1 | 工具声明 / 意图 / 分发三处手工同步，漏一处静默变成「未知工具」；`record_application` 分支已死 | `tools.py` 引入 `Tool` 注册表 + `bind_all` + `validate`；`_run_tool` 拆成 9 个处理器按表分发；`main.py` 启动校验，不完整直接起不来 |
+| 2 | 会话状态是裸读-改-写，双击回车会互相覆盖 | 按 `conversation_id` 加进程内锁，同会话串行 |
+| 3 | `application` 无唯一约束，写入是 find-then-insert | 迁移 015 去重 + 唯一索引；写入改 `upsert_application` |
+| 4 | 工具调用无超时、失败无分类 | `TOOL_TIMEOUT=60s` + `asyncio.wait_for`；`ToolResult.error_kind` 区分 timeout / tool_error / unknown |
+| 5 | 用户消息、JD、关键词都没有上限 | 消息 4000 字（挡下并提示）/ JD 2000 字 / 关键词 60 字 |
+| 6 | 观测表永不清理 | `repo/maintenance.py` + 启动时后台清理 + `tools/prune.py` |
+
+**测试**：断言 234 → **253**；ruff / mypy 0 问题。

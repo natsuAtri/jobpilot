@@ -11,6 +11,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
+
 # 工具注册表必须自洽：少绑一个 handler，模型调用时会静默变成「未知工具」。
 # 宁可起不来，也不要带着半张表上线。
 from .agent import tools as _agent_tools  # noqa: E402
@@ -65,7 +67,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="JobPilot", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="JobPilot", version=__version__, lifespan=lifespan)
 
 
 @app.exception_handler(Exception)

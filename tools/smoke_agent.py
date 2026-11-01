@@ -1072,6 +1072,50 @@ def test_tool_timeout(resume_id: int) -> None:
     check("未知工具标 unknown", unknown.error_kind == "unknown", unknown.error_kind)
 
 
+
+def test_input_caps(resume_id: int) -> None:
+    """超长输入不该整段进 prompt；候选里的 JD 也要截断。"""
+    import json as _json
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": [], "queue": [], "filters": {}, "goal": {}})
+
+    async def boom(*a, **k):
+        raise AssertionError("超长消息不应进入 agent")
+
+    original = client.chat_with_tools
+    client.chat_with_tools = boom
+    try:
+        out = chat.handle(cid, "找岗位" * 2000, resume_id)
+    finally:
+        client.chat_with_tools = original
+    check("超长消息被挡下", "太长" in out["reply"], out["reply"][:40])
+    check("提示给出上限", str(chat.MAX_USER_CHARS) in out["reply"], out["reply"][:60])
+
+    # 候选里的 JD 截断
+    class LongJob:
+        source_id, title, company = "9", "超长 JD 岗位", "X"
+        location, url = "北京", "u"
+        description = "要求：" + "Python " * 1000
+        experience, salary, education = "1-3年", "", "本科"
+
+        def as_dict(self):
+            return {"source_id": self.source_id, "title": self.title, "company": self.company,
+                    "location": self.location, "url": self.url,
+                    "description": self.description, "experience": self.experience,
+                    "education": self.education}
+
+    original_search = chat.search_51job
+    chat.search_51job = lambda *a, **k: [LongJob()]
+    try:
+        state = {"candidates": [], "queue": [], "filters": {}, "goal": {}}
+        chat._do_search(state, "找 AI 岗位", resume_id, {"keyword": "AI"})
+    finally:
+        chat.search_51job = original_search
+    stored = state["candidates"][0]["description"]
+    check("候选 JD 被截断", len(stored) <= chat.MAX_JD_CHARS, str(len(stored)))
+    check("状态不会因为长 JD 膨胀", len(_json.dumps(state)) < 10000, str(len(_json.dumps(state))))
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -1108,6 +1152,7 @@ def main() -> int:
     test_tool_registry()
     test_state_lock(resume_id)
     test_tool_timeout(resume_id)
+    test_input_caps(resume_id)
     test_trace()
 
     if failures:

@@ -32,6 +32,12 @@ from . import verify as verify_mod
 from .tools import ToolResult
 
 MAX_CANDIDATES = 30
+# 用户消息上限：再长就不是「一句话需求」了，整段进 prompt 既贵又容易跑偏
+MAX_USER_CHARS = 4000
+# 候选里存的 JD 上限：30 个候选 × 全文会让 state_json 涨到几百 KB，每轮都要重写
+MAX_JD_CHARS = 2000
+# 搜索关键词上限：模型偶尔会把整段话塞进 keyword
+MAX_KEYWORD_CHARS = 60
 
 # 同一个会话的 turn 必须串行：handle 是「读 state → 改 → 写回」，
 # 两条消息同时进来会互相覆盖（后写的把先写的候选整段冲掉）。
@@ -161,6 +167,16 @@ def handle(conversation_id: int, text: str, resume_id: int) -> dict:
 def _handle_locked(conversation_id: int, text: str, resume_id: int) -> dict:
     """真正的处理逻辑（调用方必须已持有该会话的锁）。"""
     trace.new_turn()
+    text = (text or "").strip()
+    if len(text) > MAX_USER_CHARS:
+        trace.record("error", "input_too_long", result={"chars": len(text)})
+        return {
+            "reply": (f"这条消息 {len(text)} 字，太长了（上限 {MAX_USER_CHARS} 字）。\n"
+                      "把需求浓缩成一句就行，比如「找北京 3 个 AI 应用岗位，排除外包」。\n"
+                      "JD 全文可以直接粘在「简历/岗位」页，不需要放进对话。"),
+            "intent": "chat",
+            "suggestions": SUGGESTIONS.get("chat", []),
+        }
     state = conv.get_state(conversation_id)
     state.setdefault("candidates", [])
     state.setdefault("queue", [])
@@ -571,7 +587,7 @@ def _do_search(state: dict, text: str, resume_id: int, params: dict | None = Non
     goal = goal_mod.rule_parse(text)
     params = params or {}
     if params.get("keyword"):
-        goal.keyword = params["keyword"]
+        goal.keyword = str(params["keyword"])[:MAX_KEYWORD_CHARS]
     if params.get("city"):
         goal.city = params["city"]
     if params.get("min_score"):
@@ -628,7 +644,8 @@ def _pick_fresh(jobs, goal, doc, seen: set, excluded: list[str], city: str) -> l
             continue
         fresh.append({
             "source_id": job.source_id, "title": job.title, "company": job.company,
-            "location": job.location, "url": job.url, "description": job.description,
+            "location": job.location, "url": job.url,
+            "description": (job.description or "")[:MAX_JD_CHARS],
             "experience": job.experience, "salary": job.salary,
             "education": job.education, "score": round(score, 1),
         })

@@ -646,6 +646,29 @@ def test_tool_result_shape(resume_id: int) -> None:
     check("详情带不可信标记", bool(jobs) and "sections_untrusted" in jobs[0], str(jobs)[:60])
     check("观察里没有 markdown 链接", "](/" not in detail.as_message(), detail.as_message()[:80])
 
+    # JD 是外部原文：进 prompt 时要带标记，但不能泄漏到用户可见回复里
+    from app.agent import judge as judge_mod
+
+    doc = resume_repo.load_doc(resume_id)
+    prompts = judge_mod._messages(doc, "岗位职责：写代码。")
+    check("JD 在 prompt 里标为不可信", any("<<<" in m["content"] for m in prompts),
+          str(prompts)[:80])
+
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": detail_state["candidates"], "queue": [],
+                         "filters": {}, "goal": {}})
+
+    async def judge_stub(doc_, jd):
+        return {"verdict": "推荐", "summary": "", "reasons": [], "risks": [], "suggestion": ""}
+
+    original_judge = chat.judge_mod.judge
+    chat.judge_mod.judge = judge_stub
+    try:
+        reply = chat._do_judge(detail_state, 1, "", resume_id)
+    finally:
+        chat.judge_mod.judge = original_judge
+    check("用户可见回复不出现 <<<", "<<<" not in reply, reply[:60])
+
 
 
 def test_budget(resume_id: int) -> None:

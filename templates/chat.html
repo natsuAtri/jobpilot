@@ -95,7 +95,8 @@
   // 轻量渲染：链接、**加粗**、【小标题】、· 列表
   function renderText(text) {
     let html = esc(text)
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) =>
+        /^(https?:\/\/|\/)/i.test(url) ? `<a href="${url}">${label}</a>` : label)
       .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
     const lines = html.split('\n');
     const out = [];

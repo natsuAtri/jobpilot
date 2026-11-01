@@ -22,6 +22,24 @@ def create_application(job_id: int, resume_id: int, channel: str = "", notes: st
         return int(cur.lastrowid or 0)
 
 
+def upsert_application(job_id: int, resume_id: int, channel: str = "",
+                       notes: str = "") -> int:
+    """一个岗位只保留一条投递记录；已存在则更新（不会插入第二行）。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO application(job_id, resume_id, status, channel, notes, submitted_at) "
+            "VALUES (?, ?, 'submitted', ?, ?, ?) "
+            "ON CONFLICT(job_id) DO UPDATE SET "
+            "  status = 'submitted', channel = excluded.channel, "
+            "  notes = excluded.notes, submitted_at = excluded.submitted_at, "
+            "  updated_at = ?",
+            (job_id, resume_id, channel, notes, now_local(), now_local()),
+        )
+        row = conn.execute(
+            "SELECT id FROM application WHERE job_id = ?", (job_id,)).fetchone()
+    return int(row["id"]) if row else 0
+
+
 def list_applications() -> list[dict[str, Any]]:
     with get_conn() as conn:
         rows = conn.execute(

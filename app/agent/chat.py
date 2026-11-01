@@ -879,14 +879,8 @@ def _do_record_application(state: dict, index: int | None = None, note: str = ""
     else:
         job_id = job["id"]
 
-    existing = app_repo.find_by_job(job_id)
-    if existing is not None:
-        app_repo.record_submit(existing["id"], note)
-        app_id = existing["id"]
-    else:
-        app_id = app_repo.create_application(
-            job_id=job_id, resume_id=resume_id, channel="51job", notes=note)
-        app_repo.record_submit(app_id, note)
+    # 一个岗位只留一条记录：并发的两次「投好了」不会插出两行
+    app_repo.upsert_application(job_id, resume_id, channel="51job", notes=note)
 
     _mark_performed(state, "record", cand.get("cid") or "")
     position = _index_of(state, cand)

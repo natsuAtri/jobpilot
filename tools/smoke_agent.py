@@ -439,6 +439,20 @@ def test_apply_record(resume_id: int) -> None:
     check("重复记录不会产生重复行", len(app_repo.list_applications()) == before,
           f"{before} → {len(app_repo.list_applications())}")
 
+    # 唯一约束真的落到了库上（并发时靠它兜底，而不是靠 find-then-insert）
+    import sqlite3
+
+    existing = app_repo.list_applications()[0]
+    duplicated = False
+    with get_conn() as conn:
+        try:
+            conn.execute(
+                "INSERT INTO application(job_id, resume_id) VALUES (?, ?)",
+                (existing["job_id"], resume_id))
+        except sqlite3.IntegrityError:
+            duplicated = True
+    check("同一岗位插第二条会被数据库拒绝", duplicated)
+
 
 def test_merged_proposal(resume_id: int) -> None:
     """多个岗位定制只确认一次。"""

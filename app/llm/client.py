@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -15,6 +16,22 @@ import httpx
 
 from . import registry
 from .tasks import get_task
+
+DEFAULT_TIMEOUT = 90.0
+
+
+@asynccontextmanager
+async def session(timeout: float = DEFAULT_TIMEOUT):
+    """一轮对话共用一个连接池。
+
+    不能做成模块级单例：每个用户回合都在 asyncio.run() 里新建事件循环，
+    跨循环复用 AsyncClient 会炸。所以只在「一轮」内复用。
+    """
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
+    ) as shared:
+        yield shared
 
 
 class LLMError(RuntimeError):
@@ -47,6 +64,7 @@ async def complete(
     json_mode: bool = False,
     max_tokens: int | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    client: httpx.AsyncClient | None = None,
 ) -> LLMResult:
     spec = get_task(task)
 
@@ -76,24 +94,29 @@ async def complete(
     _t0 = _time.time()
     resp = None
     last_error: str = ""
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(_endpoint(provider.base_url), json=payload, headers=headers)
-        except httpx.RequestError as exc:
-            last_error = f"无法连接 {provider.label}：{exc}"
-            if attempt < 2:
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        for attempt in range(3):
+            try:
+                resp = await http.post(_endpoint(provider.base_url), json=payload, headers=headers)
+            except httpx.RequestError as exc:
+                last_error = f"无法连接 {provider.label}：{exc}"
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise LLMError(last_error) from exc
+
+            if resp.status_code < 400:
+                break
+            last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
+            if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
-            raise LLMError(last_error) from exc
-
-        if resp.status_code < 400:
-            break
-        last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
-        if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-            await asyncio.sleep(1.5 * (attempt + 1))
-            continue
-        raise LLMError(last_error)
+            raise LLMError(last_error)
+    finally:
+        if own:
+            await http.aclose()
 
     if resp is None or resp.status_code >= 400:
         raise LLMError(last_error or f"{provider.label} 请求失败")
@@ -132,6 +155,7 @@ async def complete_json(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
     """要求模型返回 JSON 并解析。
 
@@ -212,7 +236,8 @@ async def chat_with_tools(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
-    timeout: float = 90.0,
+    timeout: float = DEFAULT_TIMEOUT,
+    client: httpx.AsyncClient | None = None,
 ) -> ToolReply:
     """一次带 tools 的对话补全。模型可能返回 tool_calls 而不是文本。"""
     if os.environ.get("RA_LLM_STUB") == "1":
@@ -247,23 +272,28 @@ async def chat_with_tools(
     _t0 = _time.time()
     last_error = ""
     resp = None
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(_endpoint(provider.base_url), json=payload, headers=headers)
-        except httpx.RequestError as exc:
-            last_error = f"无法连接 {provider.label}：{exc}"
-            if attempt < 2:
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        for attempt in range(3):
+            try:
+                resp = await http.post(_endpoint(provider.base_url), json=payload, headers=headers)
+            except httpx.RequestError as exc:
+                last_error = f"无法连接 {provider.label}：{exc}"
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise LLMError(last_error) from exc
+            if resp.status_code < 400:
+                break
+            last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
+            if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
-            raise LLMError(last_error) from exc
-        if resp.status_code < 400:
-            break
-        last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
-        if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-            await asyncio.sleep(1.5 * (attempt + 1))
-            continue
-        raise LLMError(last_error)
+            raise LLMError(last_error)
+    finally:
+        if own:
+            await http.aclose()
 
     if resp is None or resp.status_code >= 400:
         raise LLMError(last_error or f"{provider.label} 请求失败")

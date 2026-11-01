@@ -750,6 +750,27 @@ def test_record_gate(resume_id: int) -> None:
           any(item.get("action") == "record" for item in performed), str(performed))
 
 
+
+def test_shared_client(resume_id: int) -> None:
+    """一轮对话应该复用同一个 HTTP 连接池，而不是每步新建。"""
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": [], "queue": [], "filters": {}, "goal": {}})
+    seen: list[object] = []
+
+    async def capture(task, messages, tools, **kw):
+        seen.append(kw.get("client"))
+        return client.ToolReply(content="好的", tool_calls=[])
+
+    original = client.chat_with_tools
+    client.chat_with_tools = capture
+    try:
+        chat.handle(cid, "我最近在考虑换工作，你觉得我该从哪下手", resume_id)
+    finally:
+        client.chat_with_tools = original
+    check("循环把共享 client 传给了模型调用", bool(seen) and seen[0] is not None,
+          str(seen[:1]))
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -779,6 +800,7 @@ def main() -> int:
     test_tool_result_shape(resume_id)
     test_budget(resume_id)
     test_record_gate(resume_id)
+    test_shared_client(resume_id)
     test_trace()
 
     if failures:

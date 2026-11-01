@@ -457,6 +457,16 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
         *_history(conversation_id),
         {"role": "user", "content": text},
     ]
+    # 一轮对话共用一个连接池：否则 3 步 = 3 次 TCP + TLS 握手
+    async with client.session() as http:
+        return await _agent_loop(messages, text, state, resume_id, http)
+
+
+async def _agent_loop(messages: list[dict], text: str, state: dict,
+                      resume_id: int, http) -> tuple[str, str]:
+    from ..llm import client
+    from . import tools as tools_mod
+
     used: list[str] = []
     produced: list[str] = []
     budget = TurnBudget()
@@ -464,7 +474,8 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
     for _ in range(tools_mod.MAX_STEPS):
         if budget.exhausted():
             break
-        reply = await client.chat_with_tools("agent_tools", messages, tools_mod.TOOLS)
+        reply = await client.chat_with_tools(
+            "agent_tools", messages, tools_mod.TOOLS, client=http)
         budget.llm_calls += 1
         calls = reply.tool_calls
         if not calls:
@@ -494,9 +505,9 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
                              "content": result.as_message()[:4000]})
 
     # 走到这里说明模型一直在调工具、没给出最终回答：把已有结果给用户并说明原因
-    text = "\n\n".join(produced) if produced else _help_text()
-    text += "\n\n（这一轮的处理时间/调用次数到上限了，先把已经做的结果给你）"
-    return text, (used[0] if used else "chat")
+    answer = "\n\n".join(produced) if produced else _help_text()
+    answer += "\n\n（这一轮的处理时间/调用次数到上限了，先把已经做的结果给你）"
+    return answer, (used[0] if used else "chat")
 
 
 # ---------------------------------------------------------------- 动作

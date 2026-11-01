@@ -647,6 +647,69 @@ def test_tool_result_shape(resume_id: int) -> None:
     check("观察里没有 markdown 链接", "](/" not in detail.as_message(), detail.as_message()[:80])
 
 
+
+def test_budget(resume_id: int) -> None:
+    """模型一直调工具要能收尾；LLMError 降级；其它异常必须穿透。"""
+    import time as _time
+
+    from app.llm.client import LLMError
+
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": [], "queue": [], "filters": {}, "goal": {},
+                         "resume_id": resume_id})
+    text = "我最近在考虑换工作，你觉得我该从哪下手"
+    original = client.chat_with_tools
+
+    async def never_stops(task, messages, tools, **kw):
+        return client.ToolReply(content="", tool_calls=[{
+            "id": "c1", "type": "function",
+            "function": {"name": "list_candidates", "arguments": "{}"}}])
+
+    client.chat_with_tools = never_stops
+    started = _time.time()
+    try:
+        out = chat.handle(cid, text, resume_id)
+    finally:
+        client.chat_with_tools = original
+    elapsed = _time.time() - started
+    check("一直调工具也能收尾", elapsed < 10, f"{elapsed:.1f}s")
+    check("回复说明到了上限", "上限" in out["reply"], out["reply"][-60:])
+    with get_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) n FROM agent_trace WHERE kind='tool'").fetchone()["n"]
+    check("工具调用次数受控", n <= 8, str(n))
+
+    async def llm_down(*a, **k):
+        raise LLMError("模型不可用")
+
+    client.chat_with_tools = llm_down
+    try:
+        out = chat.handle(cid, text, resume_id)
+    finally:
+        client.chat_with_tools = original
+    check("模型不可用时降级到规则", bool(out["reply"]), out["reply"][:30])
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT result_json FROM agent_trace WHERE kind='error' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    check("失败原因标记为 llm_unavailable",
+          bool(row) and "llm_unavailable" in row["result_json"],
+          (row["result_json"] if row else "无记录")[:120])
+
+    async def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    client.chat_with_tools = boom
+    raised = None
+    try:
+        try:
+            chat.handle(cid, text, resume_id)
+        except RuntimeError as exc:
+            raised = exc
+    finally:
+        client.chat_with_tools = original
+    check("代码缺陷不被吞成规则回复", isinstance(raised, RuntimeError), str(raised))
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -674,6 +737,7 @@ def main() -> int:
     test_agent_pronoun(resume_id)
     test_tailor_idempotent(resume_id)
     test_tool_result_shape(resume_id)
+    test_budget(resume_id)
     test_trace()
 
     if failures:

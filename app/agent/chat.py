@@ -8,9 +8,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
+from dataclasses import dataclass, field
 
 from .. import trace
 from ..apply import open_job
+from ..llm.client import LLMError
 from ..rag.chunk import _split_jd_sections
 from ..repo import jobs as job_repo
 from ..repo import resumes as resume_repo
@@ -27,6 +30,28 @@ from . import verify as verify_mod
 from .tools import ToolResult
 
 MAX_CANDIDATES = 30
+
+
+@dataclass
+class TurnBudget:
+    """一轮对话的资源上限。
+
+    单次 chat_with_tools 有 90s 超时、内部最多重试 3 次，MAX_STEPS=3，
+    最坏能占住一个线程池线程十几分钟。用户关掉页面也没法取消，
+    所以这里加总时长 / 总调用数的硬闸门。
+    """
+
+    max_seconds: float = 150.0
+    max_llm_calls: int = 6
+    max_tool_calls: int = 8
+    started: float = field(default_factory=time.monotonic)
+    llm_calls: int = 0
+    tool_calls: int = 0
+
+    def exhausted(self) -> bool:
+        return (time.monotonic() - self.started > self.max_seconds
+                or self.llm_calls >= self.max_llm_calls
+                or self.tool_calls >= self.max_tool_calls)
 
 # 每个意图回答后给出的「下一步」建议（点击即发送）
 SUGGESTIONS: dict[str, list[str]] = {
@@ -131,7 +156,7 @@ def handle(conversation_id: int, text: str, resume_id: int) -> dict:
         result = _agent_turn(conversation_id, text, state, resume_id)
         if result is None:
             fallback = intent_mod.classify(text)
-            trace.record("error", "agent_loop", result={"fallback": fallback.name})
+            trace.record("fallback", "agent", result={"intent": fallback.name})
             reply = _dispatch(fallback, text, state, resume_id)
             used = fallback.name
         else:
@@ -400,8 +425,10 @@ def _agent_turn(conversation_id: int, text: str, state: dict,
     """跑工具循环。失败返回 None——上层会退回到规则。"""
     try:
         return asyncio.run(_agent_turn_async(conversation_id, text, state, resume_id))
-    except Exception as exc:  # noqa: BLE001 - 模型不可用时退回规则
-        trace.record("error", "agent_loop", result={"error": str(exc)})
+    except LLMError as exc:
+        # 模型不可用是可预期的，降级到规则；其它异常是缺陷，让它冒到全局兜底页
+        trace.record("error", "agent_loop",
+                     result={"kind": "llm_unavailable", "error": str(exc)[:300]})
         return None
 
 
@@ -418,9 +445,13 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
     ]
     used: list[str] = []
     produced: list[str] = []
+    budget = TurnBudget()
 
     for _ in range(tools_mod.MAX_STEPS):
+        if budget.exhausted():
+            break
         reply = await client.chat_with_tools("agent_tools", messages, tools_mod.TOOLS)
+        budget.llm_calls += 1
         calls = reply.tool_calls
         if not calls:
             content = (reply.content or "").strip()
@@ -437,6 +468,7 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
             except json.JSONDecodeError:
                 args = {}
             # 工具内部会 asyncio.run（judge / 关键词规划），放到线程里跑避免嵌套事件循环
+            budget.tool_calls += 1
             result = await asyncio.to_thread(
                 _run_tool, name, args, state, resume_id, text)
             used.append(result.intent)
@@ -447,9 +479,10 @@ async def _agent_turn_async(conversation_id: int, text: str, state: dict,
                              "tool_call_id": call.get("id") or f"call_{len(used)}",
                              "content": result.as_message()[:4000]})
 
-    if produced:
-        return "\n\n".join(produced), (used[0] if used else "chat")
-    return _help_text(), "chat"
+    # 走到这里说明模型一直在调工具、没给出最终回答：把已有结果给用户并说明原因
+    text = "\n\n".join(produced) if produced else _help_text()
+    text += "\n\n（这一轮的处理时间/调用次数到上限了，先把已经做的结果给你）"
+    return text, (used[0] if used else "chat")
 
 
 # ---------------------------------------------------------------- 动作

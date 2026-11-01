@@ -35,3 +35,21 @@
    的泛化，不是算法 bug。
 2. **匹配分数整体下移**：原来 100 分的岗位现在 60-70，是更诚实的刻度；
    如果觉得太严，调 `WEIGHTS["project"]` 或 `project_relevance` 里的映射区间即可。
+
+
+---
+
+## Agent 层残留问题（第 35 轮改造后仍未解决）
+
+这一轮修了候选身份、原话透传、工具观察/呈现分离、预算、写工具下架等，
+但下面这些是**明确没做**的，写在这里避免被当成已完成：
+
+| 问题 | 现状 | 影响 | 建议 |
+|---|---|---|---|
+| 候选没落成独立表 | 存在 `conversation.state_json` 里 | 会话状态和业务表可能不一致（岗位被删后候选还在） | 候选落表，`cid` 做主键 |
+| 四层 async 桥接 | `to_thread` → `asyncio.run` → `to_thread` | 每轮新建事件循环，连接池只能「每轮一个」；取消不了正在跑的一轮 | 把 agent turn 改成原生 async |
+| 只有单会话 | `conversation.get_active()` 固定取最早一条 | 无法同时对比两条求职线 | 会话列表 + 切换 |
+| 写操作只到 state | `pending` / `performed` 存在 `state_json` | 进程重启后「待确认」丢失 | 落成 `pending_action` 表 |
+| 匹配权重未校准 | 五维度权重是经验值 | 分数是否预测投递效果没有证据 | 见 `docs/roadmap.md` A1 |
+| 夹具不测语义质量 | `smoke_agent_replay` 只测循环与接线 | 改工具描述后模型选错工具，夹具仍绿 | 用 `eval_agent.py`（需真实模型）兜 |
+| `record_application` 的 handler 还在 | `_run_tool` 里保留了分支但工具面已下架 | 死代码 | T14 一起清 |

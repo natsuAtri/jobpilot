@@ -626,3 +626,41 @@ ATS 版不含；奖项章节在两种版本都正常。
 **测试**
 - 新增 5 条断言（投递记录、去重、合并确认）+ 2 条对话评测用例
 - 合计 **176 条断言全绿**，`eval_agent.py` **17/17**
+
+---
+
+## 第 35 轮：Agent 层加固（按《Agent 层改造任务书》执行）
+
+**确定性 bug**
+- T1 候选身份：位置 → 会话内递增 `cid`；追加候选只往末尾放，旧位置永不漂移；
+  满 30 个明确提示；记录投递前必须有 `last_apply_cid`
+- T2 原话透传：`_run_tool` 增加 `utterance`，「这个」「那个」不再静默落到第 1 个；
+  问薪资不再倾倒整段 JD
+- T3 「按你的简历」提示此前被 `note = ""` 覆盖，从未生效过
+- T4 定制任务 in-flight 去重；`get_or_create_run` 捕获 `IntegrityError` 回查
+
+**agent 接口**
+- T5 工具返回 `ToolResult(ok/intent/text/data)`：模型看数据，用户看文案；
+  `_do_ask_detail` / `_do_judge` / `_do_advice` 拆出 `*_of` 版本
+- T6 单轮预算（150s / 6 次模型 / 8 次工具）+ 只对 `LLMError` 降级，
+  代码缺陷不再被吞成规则回复
+- T7 `record_application` 从工具面下架（JD 注入无处落点），改由规则意图承接；
+  提议/执行留痕 `pending` / `performed`
+- T10 `verify` 补上第三条：声称「已记录 / 已打开 / 已提交定制」必须有对应动作
+
+**可测性**
+- T8 新增 5 个夹具 + `smoke_agent_replay.py` 进 CI；`record_agent.py` 本地录制
+- T9 `eval_agent` 由「交集」改「精确 / 子集 + 禁止集」，17 条用例，真实模型 17/17
+
+**LLM 客户端**
+- T11 一轮复用一个连接池（此前每步新建 AsyncClient）
+- T12 读 `finish_reason`（截断提示）、清洗 `tool_calls`、`response_format` 自动降级
+- T13 尊重 `Retry-After`；`LLMError.kind` 区分 network / auth / rate_limit / server / format / config
+
+**安全与工程**
+- T16 JD 标为 `sections_untrusted`；前端链接加 scheme 白名单（javascript: 被拦下）
+- T17 替身模式不再把 JSON 甩给用户
+- T18 `run.py` 校验 Python 版本，3.11 下给出可操作提示而不是 `ArgsKwargs`
+- T14（删死代码）按用户要求推迟到后续版本
+
+**测试**：断言 176 → **234**；意图 30/30；对话评测 17/17；ruff / mypy 均 0 问题。

@@ -132,7 +132,7 @@ app/
   dialogue/   解析答疑与 patch 应用
   routes/     FastAPI 路由
 migrations/   14 个 SQL 迁移
-tools/        11 个脚本（165 条断言）+ 意图/对话评测集
+tools/        20 个脚本（234 条断言）+ 意图/对话评测 + 夹具回放
 docs/         技术报告 / 设计文档 / 改动日志 / 已知问题
 ```
 
@@ -151,16 +151,19 @@ python tools/smoke_apply.py                  # 投递 13 项
 python tools/smoke_search_personal.py        # 个人库 19 项
 python tools/smoke_scratch.py                # 从零创建 10 项
 RA_LLM_STUB=1 python tools/smoke_generate.py # 双 agent 13 项
+python tools/smoke_agent.py                  # 路由 / 工具循环 / 澄清 / 检查点 111 项
+python tools/smoke_agent_replay.py           # 夹具回放 5 项（CI 也跑这个）
 ```
 
-合计 **165 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
+合计 **234 条断言**。`RA_LLM_STUB=1` 启用 `app/llm/stub.py` 里的替身模型，
 不需要 API Key 就能验通链路。
 
 另有两个评测集：
 
 ```bash
 python tools/eval_intent.py -v   # 30 条意图，离线，门禁式退出码
-python tools/eval_agent.py -v    # 15 条对话，需要真实模型，验证工具选择
+python tools/eval_agent.py -v    # 17 条对话，需要真实模型，验证工具选择
+python tools/record_agent.py     # 用真实模型重录夹具（改了工具描述后跑一次）
 ```
 
 ## 开发
@@ -183,7 +186,7 @@ CI 在每次 push 时自动跑 ruff + mypy + 不依赖模型/浏览器的测试�
 用户输入
   ├─ 精确指令（投/定制第 N 个、再找几个、排除 X、现在有什么…）→ 直接执行，0 次模型调用
   └─ 其余全部交给 agent：模型看「简历摘要 + 候选清单 + 最近 3 轮对话」，
-     自己决定调哪些工具、调几次（最多 4 步）
+     自己决定调哪些工具、调几次（最多 3 步）
 ```
 
 定制简历与投递是**有副作用**的动作：agent 只能提议，用户回复「定制 N」「投 N」确认后才执行。

@@ -771,6 +771,77 @@ def test_shared_client(resume_id: int) -> None:
           str(seen[:1]))
 
 
+
+def test_client_robustness(resume_id: int) -> None:
+    """截断要提示；tool_calls 要清洗；不支持 response_format 的端点要自动降级。"""
+    import json as _json
+
+    import httpx
+
+    from app.llm import client as llm
+
+    cid = conv.get_active()
+    conv.set_state(cid, {"candidates": [], "queue": [], "filters": {}, "goal": {}})
+
+    async def truncated(task, messages, tools, **kw):
+        return llm.ToolReply(content="半截话", tool_calls=[], finish_reason="length")
+
+    original = llm.chat_with_tools
+    llm.chat_with_tools = truncated
+    try:
+        out = chat.handle(cid, "我最近在考虑换工作，你觉得我该从哪下手", resume_id)
+    finally:
+        llm.chat_with_tools = original
+    check("回答被截断会告知用户", "截断了" in out["reply"], out["reply"][-40:])
+
+    # 后面的用例要真的走 HTTP，所以临时关掉替身
+    stub_env = os.environ.pop("RA_LLM_STUB", None)
+    try:
+        sent: list[dict] = []
+
+        def handler(request):
+            sent.append(_json.loads(request.content))
+            if len(sent) == 1:
+                return httpx.Response(400, json={"error": "response_format not supported"})
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"ok": 1}'}, "finish_reason": "stop"}],
+            })
+
+        async def run_json():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+                return await llm.complete_json(
+                    "resume_strategy", [{"role": "user", "content": "x"}], client=http)
+
+        data = asyncio.run(run_json())
+        check("json 模式不支持时自动降级", data == {"ok": 1}, str(data))
+        check("第一次带 response_format", "response_format" in sent[0])
+        check("降级后不再带 response_format", "response_format" not in sent[1])
+
+        def tool_handler(request):
+            return httpx.Response(200, json={
+                "choices": [{
+                    "message": {"content": "", "tool_calls": [{
+                        "id": "x", "type": "function", "index": 0,
+                        "function": {"name": "search_jobs", "arguments": "{}"},
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            })
+
+        async def run_tools():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(tool_handler)) as http:
+                return await llm.chat_with_tools(
+                    "agent_tools", [{"role": "user", "content": "x"}], [], client=http)
+
+        reply = asyncio.run(run_tools())
+        check("tool_calls 只保留必要字段",
+              set(reply.tool_calls[0]) == {"id", "type", "function"}, str(reply.tool_calls[0]))
+        check("finish_reason 透传", reply.finish_reason == "tool_calls", reply.finish_reason)
+    finally:
+        if stub_env is not None:
+            os.environ["RA_LLM_STUB"] = stub_env
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -801,6 +872,7 @@ def main() -> int:
     test_budget(resume_id)
     test_record_gate(resume_id)
     test_shared_client(resume_id)
+    test_client_robustness(resume_id)
     test_trace()
 
     if failures:

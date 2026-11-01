@@ -481,6 +481,9 @@ async def _agent_loop(messages: list[dict], text: str, state: dict,
         if not calls:
             content = (reply.content or "").strip()
             if content:
+                if reply.finish_reason == "length":
+                    trace.record("error", "truncated", result={"chars": len(content)})
+                    content += "\n\n（回答被长度限制截断了，要完整版可以让我只说结论）"
                 return content, (used[0] if used else "chat")
             break
         messages.append({"role": "assistant", "content": reply.content or "",

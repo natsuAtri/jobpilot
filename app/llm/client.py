@@ -18,6 +18,8 @@ from . import registry
 from .tasks import get_task
 
 DEFAULT_TIMEOUT = 90.0
+# 有些端点不认 response_format，命中后记下来，后面同一端点直接不加
+_JSON_MODE_UNSUPPORTED: set[str] = set()
 
 
 @asynccontextmanager
@@ -81,6 +83,9 @@ async def complete(
     }
     if max_tokens:
         payload["max_tokens"] = max_tokens
+    endpoint_key = f"{provider.base_url}|{model}"
+    if json_mode and endpoint_key in _JSON_MODE_UNSUPPORTED:
+        json_mode = False
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
@@ -110,6 +115,12 @@ async def complete(
             if resp.status_code < 400:
                 break
             last_error = f"{provider.label} 返回 {resp.status_code}：{resp.text[:300]}"
+            if (resp.status_code in (400, 422) and json_mode
+                    and endpoint_key not in _JSON_MODE_UNSUPPORTED):
+                _JSON_MODE_UNSUPPORTED.add(endpoint_key)
+                payload.pop("response_format", None)
+                json_mode = False
+                continue
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
@@ -170,7 +181,8 @@ async def complete_json(
     last_error = None
     for attempt in range(2):
         result = await complete(
-            task, messages, temperature=temperature, json_mode=True, max_tokens=max_tokens
+            task, messages, temperature=temperature, json_mode=True,
+            max_tokens=max_tokens, client=client,
         )
         raw = result.text.strip()
         if raw.startswith("```"):
@@ -263,6 +275,7 @@ async def chat_with_tools(
     if max_tokens:
         payload["max_tokens"] = max_tokens
 
+    endpoint_key = f"{provider.base_url}|{model}"
     headers = {"Content-Type": "application/json"}
     if provider.api_key:
         headers["Authorization"] = f"Bearer {provider.api_key}"
@@ -304,7 +317,21 @@ async def chat_with_tools(
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise LLMError(f"{provider.label} 返回了无法解析的响应") from exc
 
-    calls = message.get("tool_calls") or []
+    raw_calls = message.get("tool_calls") or []
+    # 严格网关会因为回传多余字段（如 index）报 400，只留必要字段
+    calls: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_calls):
+        if not isinstance(raw, dict):
+            continue
+        fn = raw.get("function")
+        if not isinstance(fn, dict):
+            fn = {}
+        calls.append({
+            "id": raw.get("id") or f"call_{index}",
+            "type": "function",
+            "function": {"name": fn.get("name") or "", "arguments": fn.get("arguments") or "{}"},
+        })
+    finish_reason = data["choices"][0].get("finish_reason") or ""
     usage = data.get("usage", {}) if isinstance(data, dict) else {}
     try:
         from .. import trace
@@ -320,4 +347,5 @@ async def chat_with_tools(
     except Exception:  # noqa: BLE001
         pass
 
-    return ToolReply(content=message.get("content") or "", tool_calls=calls)
+    return ToolReply(content=message.get("content") or "", tool_calls=calls,
+                     finish_reason=finish_reason)

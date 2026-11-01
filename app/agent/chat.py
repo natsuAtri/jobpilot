@@ -625,7 +625,7 @@ def _do_tailor(state: dict, index: int | None, resume_id: int, text: str = "") -
             "company": cand.get("company") or "", "score": cand.get("score"),
         })
     return (
-        f"开始为「{cand['title']}」生成定制简历（约 30 秒，后台进行）。\n"
+        f"已为「{cand['title']}」提交定制任务，后台进行中（重复点不会重复跑）。\n"
         f"看进度：[生成过程](/jobs/{job_id}/generate?resume_id={resume_id}&run={run_id})\n"
         f"生成完会在[终审页](/jobs/{job_id}/generate?resume_id={resume_id})逐条列出改动，等你确认。"
     )

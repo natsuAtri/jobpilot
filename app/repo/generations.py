@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 from ..db import get_conn
@@ -16,11 +17,19 @@ def get_or_create_run(base_resume_id: int, job_id: int) -> int:
         ).fetchone()
         if row:
             return int(row["id"])
-        cur = conn.execute(
-            "INSERT INTO generation_run(base_resume_id, job_id) VALUES (?, ?)",
-            (base_resume_id, job_id),
-        )
-        return int(cur.lastrowid or 0)
+        try:
+            cur = conn.execute(
+                "INSERT INTO generation_run(base_resume_id, job_id) VALUES (?, ?)",
+                (base_resume_id, job_id),
+            )
+            return int(cur.lastrowid or 0)
+        except sqlite3.IntegrityError:
+            # 并发下另一个线程先插进去了：回查一次拿已有的 id
+            row = conn.execute(
+                "SELECT id FROM generation_run WHERE base_resume_id = ? AND job_id = ?",
+                (base_resume_id, job_id),
+            ).fetchone()
+            return int(row["id"]) if row else 0
 
 
 def find_run(base_resume_id: int, job_id: int) -> dict[str, Any] | None:

@@ -557,6 +557,38 @@ def test_agent_pronoun(resume_id: int) -> None:
     check("问薪资不倒整段 JD", "岗位二的 JD" not in detail, detail[:60])
 
 
+
+def test_tailor_idempotent(resume_id: int) -> None:
+    """同一个岗位连点两次定制，只能有一个任务在跑。"""
+    import time as _time
+
+    from app.routes import generate as gen_route
+
+    runs: list[str] = []
+
+    def fake_worker(run_id, job_id, rid, opinion):
+        runs.append(run_id)
+        _time.sleep(0.4)
+
+    original_worker = gen_route._worker
+    gen_route._worker = fake_worker
+    gen_route._inflight.clear()
+    try:
+        first = gen_route._start(901, resume_id)
+        second = gen_route._start(901, resume_id)
+        check("重复定制返回同一个 run", first == second, f"{first} vs {second}")
+        _time.sleep(0.9)
+        check("worker 只跑了一次", len(runs) == 1, str(len(runs)))
+
+        _time.sleep(0.2)
+        third = gen_route._start(901, resume_id)
+        check("上一轮结束后可以重新跑", third != first, f"{third} vs {first}")
+        _time.sleep(0.9)
+    finally:
+        gen_route._worker = original_worker
+        gen_route._inflight.clear()
+
+
 def test_trace() -> None:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT kind, name FROM agent_trace")]
@@ -582,6 +614,7 @@ def main() -> int:
     test_merged_proposal(resume_id)
     test_candidate_identity(resume_id)
     test_agent_pronoun(resume_id)
+    test_tailor_idempotent(resume_id)
     test_trace()
 
     if failures:

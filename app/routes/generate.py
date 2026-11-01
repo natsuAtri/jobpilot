@@ -78,12 +78,34 @@ def _worker(run_id: str, job_id: int, resume_id: int, opinion: str) -> None:
         gen_progress.fail(run_id, f"{type(exc).__name__}: {exc}")
 
 
+# 同一个 (简历, 岗位) 同时只该有一个生成任务：连点两次「定制」不该烧两遍 token，
+# 也不该让两个线程往同一份 generation_item 里互相覆盖。
+_inflight: dict[tuple[int, int], str] = {}
+_inflight_lock = threading.Lock()
+
+
 def _start(job_id: int, resume_id: int, opinion: str = "") -> str:
-    run_id = gen_progress.create()
+    key = (resume_id, job_id)
+    with _inflight_lock:
+        existing = _inflight.get(key)
+        if existing is not None:
+            return existing
+        run_id = gen_progress.create()
+        _inflight[key] = run_id
     threading.Thread(
-        target=_worker, args=(run_id, job_id, resume_id, opinion), daemon=True
+        target=_worker_tracked, args=(key, run_id, job_id, resume_id, opinion), daemon=True
     ).start()
     return run_id
+
+
+def _worker_tracked(key: tuple[int, int], run_id: str, job_id: int,
+                    resume_id: int, opinion: str) -> None:
+    try:
+        _worker(run_id, job_id, resume_id, opinion)
+    finally:
+        with _inflight_lock:
+            if _inflight.get(key) == run_id:
+                _inflight.pop(key, None)
 
 
 def _wants_json(request: Request) -> bool:

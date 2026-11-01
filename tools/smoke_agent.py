@@ -810,6 +810,26 @@ def test_shared_client(resume_id: int) -> None:
 
 
 
+
+class _FakeProvider:
+    """CI 上没有 .env，registry.resolve 会抛 LookupError。
+
+    要测 HTTP 行为就得绕开真实配置：给一个假端点，请求交给 MockTransport。
+    """
+
+    label = "test"
+    base_url = "http://test.local"
+    api_key = "test-key"
+
+
+def _patch_resolve():
+    from app.llm import registry as llm_registry
+
+    original = llm_registry.resolve
+    llm_registry.resolve = lambda task: (_FakeProvider(), "test-model")
+    return original
+
+
 def test_client_robustness(resume_id: int) -> None:
     """截断要提示；tool_calls 要清洗；不支持 response_format 的端点要自动降级。"""
     import json as _json
@@ -834,6 +854,7 @@ def test_client_robustness(resume_id: int) -> None:
 
     # 后面的用例要真的走 HTTP，所以临时关掉替身
     stub_env = os.environ.pop("RA_LLM_STUB", None)
+    original_resolve = _patch_resolve()
     try:
         sent: list[dict] = []
 
@@ -876,6 +897,9 @@ def test_client_robustness(resume_id: int) -> None:
               set(reply.tool_calls[0]) == {"id", "type", "function"}, str(reply.tool_calls[0]))
         check("finish_reason 透传", reply.finish_reason == "tool_calls", reply.finish_reason)
     finally:
+        from app.llm import registry as llm_registry
+
+        llm_registry.resolve = original_resolve
         if stub_env is not None:
             os.environ["RA_LLM_STUB"] = stub_env
 
@@ -890,6 +914,7 @@ def test_retry_policy(resume_id: int) -> None:
     from app.llm import client as llm
 
     stub_env = os.environ.pop("RA_LLM_STUB", None)
+    original_resolve = _patch_resolve()
     try:
         hits = {"n": 0}
 
@@ -932,6 +957,9 @@ def test_retry_policy(resume_id: int) -> None:
         check("401 不重试", hits["n"] == 1, str(hits["n"]))
         check("鉴权分类正确", raised2 is not None and raised2.kind == "auth", str(raised2))
     finally:
+        from app.llm import registry as llm_registry
+
+        llm_registry.resolve = original_resolve
         if stub_env is not None:
             os.environ["RA_LLM_STUB"] = stub_env
 

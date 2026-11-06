@@ -1376,6 +1376,10 @@ details.card[open] > summary { margin-bottom: 6px; }
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     color: var(--muted); font-size: 13px;
   }
+  /* 「导入并解析」跟左边的虚线框等高，视觉上齐平 */
+  section.card > .inline-form:has(.file-picker) > .btn {
+    align-self: stretch; height: auto; min-height: 44px;
+  }
 
   /* ---------- 杂项 ---------- */
   code {

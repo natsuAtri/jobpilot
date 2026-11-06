@@ -73,11 +73,11 @@ async def main() -> int:
     check("基本信息也被写入", filled.location == "北京", str(filled.location))
 
     # 从零建出来的简历也必须能正常导出
-    html = render_html(filled, theme="ink", variant="ats")
-    out = BASE / "data" / "export" / "scratch-ats.pdf"
+    html = render_html(filled, theme="ink")
+    out = BASE / "data" / "export" / "scratch.pdf"
     print_to_pdf(html, out)
     result = verify_pdf(out, expected_fragments(filled))
-    check("从零简历可导出 ATS 版", result.ok, result.message)
+    check("从零简历可导出 PDF", result.ok, result.message)
 
     with repo.get_conn() as conn:
         conn.execute("DELETE FROM resume WHERE id = ?", (resume_id,))

@@ -28,13 +28,9 @@
     <div class="pane-tabs">
       <button type="button" class="ptab on" data-pane="live">实时预览</button>
       <button type="button" class="ptab" data-pane="orig">原稿</button>
-      <span class="pane-variants">
-        <button type="button" class="vtab on" data-variant="design">设计版</button>
-        <button type="button" class="vtab" data-variant="ats">ATS</button>
-      </span>
     </div>
     <iframe id="livePane" class="live-frame"
-            src="/resumes/{{ resume.id }}/preview?variant=design"></iframe>
+            src="/resumes/{{ resume.id }}/preview"></iframe>
     <div id="origPane" hidden>
       {% for i in range(page_count) %}
         <img src="/resumes/{{ resume.id }}/page/{{ i }}.png" alt="第 {{ i + 1 }} 页">
@@ -48,11 +44,9 @@
       <h2>导出</h2>
       <div class="export-row">
         <a class="btn btn-sm" target="_blank"
-           href="/resumes/{{ resume.id }}/export?variant=design&theme=ink">设计版 · 墨蓝</a>
+           href="/resumes/{{ resume.id }}/export?theme=ink">墨蓝版</a>
         <a class="btn btn-sm" target="_blank"
-           href="/resumes/{{ resume.id }}/export?variant=design&theme=graphite">设计版 · 石墨</a>
-        <a class="btn btn-sm btn-ghost" target="_blank"
-           href="/resumes/{{ resume.id }}/export?variant=ats&theme=ink">ATS 版</a>
+           href="/resumes/{{ resume.id }}/export?theme=graphite">石墨版</a>
         <span class="export-hint muted small">每次导出都会回读校验，不一致就不给下载</span>
       </div>
     </section>
@@ -215,10 +209,9 @@
 
   document.getElementById('docForm').addEventListener('input', markDirty);
 
-  // 左侧：实时预览 / 原稿 切换 + 设计版 / ATS 切换
+  // 左侧：实时预览 / 原稿 切换
   const livePane = document.getElementById('livePane');
   const origPane = document.getElementById('origPane');
-  let currentVariant = 'design';
   fitFrame(livePane);
   livePane.addEventListener('load', () => fitFrame(livePane));
   window.addEventListener('resize', () => fitFrame(livePane));
@@ -233,14 +226,6 @@
     };
   });
 
-  document.querySelectorAll('.vtab').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('.vtab').forEach(b => b.classList.remove('on'));
-      btn.classList.add('on');
-      currentVariant = btn.dataset.variant;
-      livePane.src = '/resumes/{{ resume.id }}/preview?variant=' + currentVariant;
-    };
-  });
 </script>
 
 {% endblock %}

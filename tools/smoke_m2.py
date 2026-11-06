@@ -47,20 +47,19 @@ def main(arg: str) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     expected = expected_fragments(doc)
 
-    for variant in ("design", "ats"):
-        for theme in ("ink", "graphite") if variant == "design" else ("ink",):
-            html = render_html(doc, theme=theme, variant=variant)
-            check(f"{variant}/{theme} 生成 HTML", "<div class=\"page" in html, f"{len(html)} 字符")
+    for theme in ("ink", "graphite"):
+        html = render_html(doc, theme=theme)
+        check(f"{theme} 生成 HTML", "<div class=\"page" in html, f"{len(html)} 字符")
 
-            pdf_path = out_dir / f"resume-{variant}-{theme}.pdf"
-            print_to_pdf(html, pdf_path)
-            check(f"{variant}/{theme} 生成 PDF", pdf_path.exists() and pdf_path.stat().st_size > 5000,
-                  f"{pdf_path.stat().st_size if pdf_path.exists() else 0} 字节")
+        pdf_path = out_dir / f"resume-{theme}.pdf"
+        print_to_pdf(html, pdf_path)
+        check(f"{theme} 生成 PDF", pdf_path.exists() and pdf_path.stat().st_size > 5000,
+              f"{pdf_path.stat().st_size if pdf_path.exists() else 0} 字节")
 
-            result = verify_pdf(pdf_path, expected)
-            check(f"{variant}/{theme} 回读校验", result.ok, result.message)
-            if not result.ok:
-                print("      缺失:", result.missing[:5])
+        result = verify_pdf(pdf_path, expected)
+        check(f"{theme} 回读校验", result.ok, result.message)
+        if not result.ok:
+            print("      缺失:", result.missing[:5])
 
     # 上下文构建的健壮性
     ctx = build_context(doc)

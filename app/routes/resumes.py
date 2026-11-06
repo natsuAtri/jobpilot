@@ -157,7 +157,7 @@ async def save(request: Request, resume_id: int):
 
 
 @router.get("/{resume_id}/preview")
-async def preview_resume(resume_id: int, variant: str = "design", theme: str = "ink"):
+async def preview_resume(resume_id: int, theme: str = "ink"):
     """简历编辑页左侧的实时预览（HTML 渲染，不转 PDF）。"""
     from fastapi.responses import HTMLResponse
 
@@ -166,9 +166,7 @@ async def preview_resume(resume_id: int, variant: str = "design", theme: str = "
     doc = repo.load_doc(resume_id)
     if doc is None:
         raise HTTPException(404, "简历不存在")
-    return HTMLResponse(render_html(doc, theme=theme,
-                                    variant="ats" if variant == "ats" else "design",
-                                    photo=personal.photo_data_uri()))
+    return HTMLResponse(render_html(doc, theme=theme, photo=personal.photo_data_uri()))
 
 
 @router.post("/{resume_id}/fill-personal")
@@ -194,7 +192,6 @@ async def delete(resume_id: int):
 
 
 # --------------------------------------------------------------- 导出与预览
-VALID_VARIANTS = ("design", "ats")
 VALID_THEMES = ("ink", "graphite")
 
 
@@ -207,12 +204,11 @@ def _load_or_404(resume_id: int) -> tuple[ResumeDoc, dict]:
 
 
 @router.get("/{resume_id}/preview.png")
-async def preview_png(resume_id: int, variant: str = "design", theme: str = "ink"):
+async def preview_png(resume_id: int, theme: str = "ink"):
     doc, _ = _load_or_404(resume_id)
-    variant = variant if variant in VALID_VARIANTS else "design"
     theme = theme if theme in VALID_THEMES else "ink"
-    html = render_html(doc, theme=theme, variant=variant, photo=personal.photo_data_uri())
-    out = TMP_DIR / f"preview-{resume_id}-{variant}-{theme}.png"
+    html = render_html(doc, theme=theme, photo=personal.photo_data_uri())
+    out = TMP_DIR / f"preview-{resume_id}-{theme}.png"
     try:
         screenshot_png(html, out)
     except BrowserError as exc:
@@ -221,21 +217,18 @@ async def preview_png(resume_id: int, variant: str = "design", theme: str = "ink
 
 
 @router.get("/{resume_id}/export")
-async def export_pdf(
-    request: Request, resume_id: int, variant: str = "design", theme: str = "ink"
-):
+async def export_pdf(request: Request, resume_id: int, theme: str = "ink"):
     doc, _ = _load_or_404(resume_id)
-    variant = variant if variant in VALID_VARIANTS else "design"
     theme = theme if theme in VALID_THEMES else "ink"
 
-    html = render_html(doc, theme=theme, variant=variant, photo=personal.photo_data_uri())
-    out = EXPORT_DIR / f"resume-{resume_id}-{variant}-{theme}.pdf"
+    html = render_html(doc, theme=theme, photo=personal.photo_data_uri())
+    out = EXPORT_DIR / f"resume-{resume_id}-{theme}.pdf"
     try:
         print_to_pdf(html, out)
     except BrowserError as exc:
         raise HTTPException(500, str(exc)) from exc
 
-    # 硬性门禁：回读校验不通过就不交付，避免导出一份 ATS 读不对的简历
+    # 硬性门禁：回读校验不通过就不交付，避免导出一份文字被写坏的简历
     result = verify_pdf(out, expected_fragments(doc))
     if not result.ok:
         return templates.TemplateResponse(
@@ -245,14 +238,12 @@ async def export_pdf(
                 "active": "resume",
                 "resume": {"id": resume_id},
                 "result": result,
-                "variant": variant,
                 "theme": theme,
             },
             status_code=500,
         )
 
-    suffix = "" if variant == "design" else "-ATS"
-    filename = f"{doc.name or '简历'}-简历{suffix}.pdf"
+    filename = f"{doc.name or '简历'}-简历.pdf"
     return FileResponse(
         out,
         media_type="application/pdf",

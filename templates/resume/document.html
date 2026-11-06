@@ -76,23 +76,10 @@
   .kv{display:flex;gap:4mm;margin-top:2.2mm;font-size:9.5pt;line-height:1.7;}
   .kv .k{flex:none;width:21mm;color:var(--muted);font-weight:500;font-size:9.1pt;letter-spacing:.06em;padding-top:.15mm;}
   .kv .v{flex:1;color:#2C323A;}
-
-  /* ================= ATS 版：去装饰、标准章节名、纯文本流 ================= */
-  .ats{--accent:#000;--muted:#333;--faint:#333;--line:#999;}
-  .ats .head-rule{height:.8pt;background:#000;}
-  .ats .sec .bar{display:none;}
-  .ats .sec .txt{letter-spacing:.06em;color:#000;}
-  .ats .sec .fill{background:#000;height:.6pt;}
-  .ats .photo{display:none;}
-  .ats .intent{border:none;padding:0;letter-spacing:.04em;color:#000;}
-  .ats h1{color:#000;letter-spacing:.02em;}
-  .ats ul.bul li::before{background:#000;opacity:1;width:2pt;height:2pt;}
-  .ats .kv .k{color:#000;}
-  .ats .title,.ats .date{color:#000;}
 </style>
 </head>
 <body>
-<div class="page{{ ' ats' if ats else '' }}">
+<div class="page">
 
   <div class="head">
     <div class="head-main">
@@ -110,7 +97,7 @@
         {% endfor %}
       </div>
     </div>
-    {% if photo and not ats %}<img class="photo" src="{{ photo }}" alt="">{% endif %}
+    {% if photo %}<img class="photo" src="{{ photo }}" alt="">{% endif %}
   </div>
 
   <div class="head-rule"></div>

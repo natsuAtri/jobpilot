@@ -46,7 +46,7 @@ def _section_label(section: Section) -> str:
     return SECTION_LABELS.get(section.type, "其他")
 
 
-def build_context(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design",
+def build_context(doc: ResumeDoc, *, theme: str = "ink",
                   photo: str | None = None) -> dict:
     sections = []
     for section in sorted(doc.sections, key=lambda s: s.order_index):
@@ -85,7 +85,6 @@ def build_context(doc: ResumeDoc, *, theme: str = "ink", variant: str = "design"
         "doc": doc,
         "sections": sections,
         "theme": theme,
-        "ats": variant == "ats",
         "photo": photo,
     }
 

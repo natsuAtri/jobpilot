@@ -780,3 +780,16 @@ ATS 版不含；奖项章节在两种版本都正常。
 **结果**
 - 暗色主题全覆盖；浅色沿用暖纸色，令牌化后不再有硬编码色
 - `docs/images` 三张截图按新 UI 重拍，另加一张深色
+
+---
+
+## 第 41 轮：去掉 ATS 导出
+
+用户明确表示不用 ATS，删除整套变体，避免留半套参数增加维护面。
+
+- 路由：`preview` / `preview.png` / `export` 去掉 `variant` 参数，只保留 `theme`
+- 渲染：`render_html` / `build_context` 去掉 `variant`；`document.html` 删掉 12 行 `.ats` 样式与两处 `ats` 分支
+- 界面：编辑页去掉「设计版 / ATS」切换与 ATS 导出按钮，两个导出按钮改叫「墨蓝版 / 石墨版」
+- 导出文件名不再带 `-ATS` 后缀
+- **保留回读校验**：它挡的是 PDF 里中文被写坏（ToUnicode 错位），与 ATS 无关
+- 测试与文档同步：smoke_m2 / smoke_scratch / README / design.md / technical-report.md

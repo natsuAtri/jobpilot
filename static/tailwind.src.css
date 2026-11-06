@@ -1381,6 +1381,11 @@ details.card[open] > summary { margin-bottom: 6px; }
     align-self: stretch; height: auto; min-height: 44px;
   }
 
+  /* 按钮式链接：悬停时不能被全局 a:hover 改掉文字色（会跟背景撞色） */
+  a.btn, a.btn:hover, a.btn:focus, a.btn:active, a.btn:visited { color: var(--accent-ink); }
+  a.btn-ghost, a.btn-ghost:visited { color: var(--ink-2); }
+  a.btn-ghost:hover { color: var(--ink); }
+
   /* ---------- 杂项 ---------- */
   code {
     background: var(--tint); color: var(--accent-2);

@@ -19,7 +19,7 @@ from .agent import tools as _agent_tools  # noqa: E402
 from .config import STATIC_DIR, ensure_dirs
 from .db import migrate
 from .routes import apply, chat, dialogue, generate, jobs, pages, personal, resumes
-from .templating import ASSET_VERSION
+from .templating import asset_version
 
 _registry_problems = _agent_tools.validate()
 if _registry_problems:
@@ -76,7 +76,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> HTMLR
     detail = f"{type(exc).__name__}: {exc}"
     return HTMLResponse(
         f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>出错了 · JobPilot</title><link rel="stylesheet" href="/static/app.css?v={ASSET_VERSION}"><link rel="stylesheet" href="/static/theme.css?v={ASSET_VERSION}"></head>
+<title>出错了 · JobPilot</title><link rel="stylesheet" href="/static/app.css?v={asset_version()}"></head>
 <body><header class="topbar"><a class="brand" href="/chat">Job<em>Pilot</em></a></header>
 <main class="wrap"><h1 class="page-title">操作没有完成</h1>
 <div class="banner banner-bad">{detail}</div>

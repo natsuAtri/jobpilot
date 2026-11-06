@@ -3,9 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{% block title %}JobPilot{% endblock %}</title>
+<script>
+  // 在首帧之前定好主题，避免闪白
+  (function () {
+    try {
+      var saved = localStorage.getItem('jp-theme');
+      var dark = saved ? saved === 'dark'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (dark) document.documentElement.classList.add('dark');
+    } catch (e) {}
+  })();
+</script>
 <link rel="stylesheet" href="/static/app.css?v={{ asset_version }}">
-<link rel="stylesheet" href="/static/theme.css?v={{ asset_version }}">
 </head>
 <body>
 <header class="topbar">
@@ -20,6 +31,13 @@
       </div>
     </div>
   </nav>
+  <button type="button" class="theme-toggle" id="themeToggle" aria-label="切换深浅色" title="切换深浅色">
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle>
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"></path></svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+  </button>
 </header>
 
 <main class="wrap">
@@ -47,6 +65,16 @@
     busy.hidden = false;
   }
   function hide() { busy.hidden = true; }
+
+  // 主题切换：写入 localStorage，下次打开沿用
+  var toggle = document.getElementById('themeToggle');
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      var root = document.documentElement;
+      var dark = root.classList.toggle('dark');
+      try { localStorage.setItem('jp-theme', dark ? 'dark' : 'light'); } catch (e) {}
+    });
+  }
 
   // 表单提交给出反馈、按钮禁用防重复提交。
   // 必须用冒泡阶段：页面自己用 preventDefault() 接管（fetch 提交）的表单，

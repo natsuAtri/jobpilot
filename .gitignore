@@ -37,4 +37,9 @@ pip-*
 
 # 调试用的解析坐标导出（含真实简历内容，绝不入库）
 tools/resume_runs.json
-*_runs.json
+*_runs.json
+
+# Tailwind 构建依赖（只需要一次构建，产物 static/app.css 入库）
+.tailwind/
+node_modules/
+**/node_modules/

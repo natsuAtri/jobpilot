@@ -991,9 +991,12 @@ details.card[open] > summary { margin-bottom: 6px; }
     border-radius: var(--r-md); box-shadow: var(--shadow-2);
   }
   .nav-menu:hover .nav-menu-list, .nav-menu-list:hover { display: block; }
-  .nav-menu-list a {
-    display: block; padding: 7px 10px; border-radius: var(--r-sm);
-    color: var(--ink-2); font-size: 13.5px;
+  .topbar .nav-menu:hover .nav-menu-btn,
+  .topbar .nav-menu-btn:hover { background: var(--tint); color: var(--accent); }
+  .topbar .nav-menu-list a {
+    display: flex; align-items: center;
+    width: 100%; height: 32px; padding: 0 10px;
+    border-radius: var(--r-sm); color: var(--ink-2); font-size: 13.5px;
   }
   .nav-menu-list a:hover { background: var(--tint); color: var(--accent); }
 
@@ -1245,7 +1248,11 @@ details.card[open] > summary { margin-bottom: 6px; }
   @keyframes jp-blink { 0%, 80%, 100% { opacity: .35; } 40% { opacity: 1; } }
 
   /* 候选面板 */
-  .agent-side { position: sticky; top: 76px; }
+  .agent-side {
+    position: sticky; top: 76px;
+    background: transparent; border: 0; box-shadow: none;
+    border-radius: 0; padding: 0;
+  }
   .cand-panel {
     background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--r-lg); box-shadow: var(--shadow-3); overflow: hidden;
@@ -1333,6 +1340,32 @@ details.card[open] > summary { margin-bottom: 6px; }
   section.card > .inline-form > label input,
   section.card > .inline-form > label select { width: 100%; }
   section.card > .inline-form > .btn { flex: none; }
+
+  /* 选择文件：虚线拖放条，按钮在左、文件名在右 */
+  section.card > .inline-form > label.file-picker {
+    flex-direction: row; align-items: center; gap: 12px;
+    flex: 1 1 320px; width: auto; min-width: 0;
+    padding: 10px 14px; margin: 0;
+    border: 1.5px dashed var(--line); border-radius: var(--r-md);
+    background: var(--surface-2); cursor: pointer;
+    transition: border-color .16s, background .16s;
+  }
+  section.card > .inline-form > label.file-picker:hover {
+    border-color: var(--accent); background: var(--tint);
+  }
+  .file-picker input[type="file"] {
+    position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+  }
+  .file-picker-btn {
+    flex: none; display: inline-flex; align-items: center;
+    height: 32px; padding: 0 14px; border-radius: var(--r-sm);
+    background: var(--accent); color: var(--accent-ink);
+    font-size: 13px; font-weight: 550; white-space: nowrap;
+  }
+  .file-picker-name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--muted); font-size: 13px;
+  }
 
   /* ---------- 杂项 ---------- */
   code {

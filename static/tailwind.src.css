@@ -39,7 +39,7 @@
   --shadow-1:  0 1px 2px rgba(60, 45, 30, .05);
   --shadow-2:  0 12px 32px rgba(60, 45, 30, .12);
   --shadow-3:  0 1px 3px rgba(60, 45, 30, .06), 0 8px 24px rgba(60, 45, 30, .06);
-  --shadow-float: 0 1px 2px rgba(60, 45, 30, .05), 0 12px 28px -12px rgba(60, 45, 30, .18);
+  --shadow-float: 0 1px 2px rgba(60, 45, 30, .05), 0 10px 26px rgba(60, 45, 30, .07);
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
@@ -74,7 +74,7 @@
   --shadow-1:  0 1px 2px rgba(0, 0, 0, .3);
   --shadow-2:  0 14px 36px rgba(0, 0, 0, .45);
   --shadow-3:  0 1px 3px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
-  --shadow-float: 0 1px 2px rgba(0, 0, 0, .35), 0 12px 28px -12px rgba(0, 0, 0, .55);
+  --shadow-float: 0 1px 3px rgba(0, 0, 0, .4), 0 12px 30px rgba(0, 0, 0, .35);
 }
 
 @theme inline {

@@ -748,3 +748,35 @@ ATS 版不含；奖项章节在两种版本都正常。
 - 再导入第 1 份 → 仍是 2 份，提示「之前导入过，已按最新解析结果刷新」
 
 **测试**：断言 262 → **266**；ruff / mypy 0 问题。
+
+
+---
+
+## 第 40 轮：前端换成 Tailwind 设计系统
+
+**动机**：前端是手写 756 行 `app.css` + 157 行 `theme.css`，颜色硬编码、组件各写各的，
+观感停在「能用」。用户要求用现成框架重做，并保留暖色、加暗色。
+
+**约束**
+- 离线：不引 CDN，产物入库
+- 零运行时依赖：构建只在我这边做一次，`pip install + python run.py` 不变
+- `templates/resume/document.html` 不动（PDF 渲染模板，mm 单位）
+
+**做法**
+- `static/tailwind.src.css`：设计令牌（`:root` / `.dark`）+ `@theme inline` 映射 +
+  `@layer components` 组件层；旧样式整体并入 `@layer components`，逐页替换
+- 主题：`html.dark` + `localStorage`，首帧前内联脚本应用，无闪白
+- 组件重做：顶栏（粘性毛玻璃 + 胶囊导航 + 切换按钮）、卡片、按钮、表单、表格、
+  标签、提示条、空状态、遮罩、对话气泡、候选面板、终审条目
+- 构建：`cd .tailwind && npm.cmd run build`（node_modules 已忽略，产物 85KB）
+
+**踩到的坑**
+- `@import "legacy.css" layer(components)` 被 Tailwind 内联后**丢了 layer**，
+  旧规则以 unlayered 身份压过新组件（候选面板圆角被清 0、输入框边框仍是蓝灰）。
+  改成把旧样式直接写进 `@layer components` 才修好。
+- 旧样式里 `.agent-side .cand-panel { border:none; background:transparent }`
+  优先级更高，必须用同等权重覆盖。
+
+**结果**
+- 暗色主题全覆盖；浅色沿用暖纸色，令牌化后不再有硬编码色
+- `docs/images` 三张截图按新 UI 重拍，另加一张深色

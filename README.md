@@ -11,6 +11,10 @@
 
 ![JobPilot 对话页](docs/images/agent-chat.png)
 
+<sub>深色模式（右上角切换，会记住选择）：</sub>
+
+![JobPilot 对话页（深色）](docs/images/agent-chat-dark.png)
+
 ## 它做什么
 
 | 环节 | 能力 |

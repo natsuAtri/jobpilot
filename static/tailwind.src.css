@@ -1290,6 +1290,50 @@ details.card[open] > summary { margin-bottom: 6px; }
   }
   .cand-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--tint); }
 
+
+  /* ---------- 表单行 / 编辑页 / 终审页（批次 2） ---------- */
+  .sec-head { flex-wrap: nowrap; }
+  .sec-head > * { flex: none; white-space: nowrap; }
+  .sec-head .sec-type { flex: 1 1 auto; min-width: 0; }
+  .row-item > * { min-width: 0; }
+  .row-item .date { width: 96px; min-width: 96px; flex: none; }
+  .row-item .icon-btn { flex: none; }
+
+  .gen-list { display: flex; flex-direction: column; gap: 12px; }
+  .gen-item {
+    padding: 16px 18px; background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: var(--r-md);
+  }
+  .gen-item.is-blocked {
+    background: var(--bad-bg); border-color: var(--bad-line);
+  }
+  .gen-orig { color: var(--faint); font-size: 12.5px; margin-bottom: 6px; }
+  .gen-draft { color: var(--ink); font-size: 13.5px; line-height: 1.7; }
+  .gen-critique {
+    margin-top: 8px; padding: 8px 12px; border-radius: var(--r-sm);
+    background: var(--warn-bg); color: var(--warn); font-size: 12.5px;
+  }
+  .gen-actions { margin-top: 12px; }
+  .gen-edit { display: flex; gap: 8px; align-items: flex-start; }
+  .gen-edit textarea { flex: 1; min-height: 40px; }
+  .gen-edit .btn { flex: none; height: 40px; }
+  .gen-buttons { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .gen-buttons form { margin: 0; }
+  .gen-status { display: flex; gap: 6px; }
+
+  /* 卡片里的行内表单：标签在上、控件在下、按钮贴底 */
+  section.card > .inline-form {
+    display: flex; flex-wrap: wrap; align-items: flex-end;
+    gap: 12px; width: 100%;
+  }
+  section.card > .inline-form > label {
+    display: flex; flex-direction: column; gap: 6px;
+    flex: 1 1 260px; min-width: 0; width: auto;
+  }
+  section.card > .inline-form > label input,
+  section.card > .inline-form > label select { width: 100%; }
+  section.card > .inline-form > .btn { flex: none; }
+
   /* ---------- 杂项 ---------- */
   code {
     background: var(--tint); color: var(--accent-2);
